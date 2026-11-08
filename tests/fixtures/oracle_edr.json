@@ -1,0 +1,9 @@
+{"items":[{"TotalJobsCount":2,"Offset":0,"Limit":25,"SortBy":"POSTING_DATES_DESC","SiteNumber":"CX_7001",
+ "requisitionList":[
+  {"Id":"2961","Title":"Stage - Analyste Gestion Actions Européennes (H/F)","PostedDate":"2026-10-30","PostingEndDate":null,
+   "PrimaryLocation":"Paris, Île-de-France, France","PrimaryLocationCountry":"FR","ShortDescriptionStr":"Stage de 6 mois.",
+   "ContractType":null,"JobType":null,"WorkerType":null,"StudyLevel":null,"secondaryLocations":[]},
+  {"Id":"2955","Title":"Stagiaire RH - Administration, Compensation & Benefits","PostedDate":"2026-10-12","PostingEndDate":null,
+   "PrimaryLocation":"Luxembourg, Luxembourg","PrimaryLocationCountry":"LU","ShortDescriptionStr":"Stage RH.",
+   "ContractType":null,"JobType":null,"WorkerType":null,"StudyLevel":null,"secondaryLocations":[]}
+ ]}],"count":1,"hasMore":false,"limit":25,"offset":0}

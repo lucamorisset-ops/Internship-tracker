@@ -1,0 +1,103 @@
+name: Veille des stages
+
+on:
+  schedule:
+    - cron: "17 6,12,18 * * *"    # passages complets : 7 h 17, 13 h 17, 19 h 17 (heure de Paris en hiver)
+    - cron: "*/15 * * * *"        # toutes les 15 min : passage seulement si le site en a demandé un
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Sources à lire (ids séparés par des virgules, vide = toutes)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Sans notification"
+        type: boolean
+        default: false
+
+concurrency:
+  group: veille
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # uniquement pour le commit « keepalive » (voir plus bas)
+
+env:
+  SUPABASE_URL: ${{ vars.SUPABASE_URL || 'https://whitghcavsimmfuvziry.supabase.co' }}
+  SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+  NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+  SITE_URL: ${{ vars.SITE_URL || 'https://lucamorisset-ops.github.io/Internship-tracker/' }}
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  veille:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Configuration présente ?
+        id: cfg
+        run: |
+          if [ -z "$SUPABASE_SECRET_KEY" ]; then
+            echo "Secret SUPABASE_SECRET_KEY absent : le robot attend la fin de l'installation (voir README)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ready == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.cfg.outputs.ready == 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Dépendances
+        if: steps.cfg.outputs.ready == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Demande en attente ?
+        id: req
+        if: steps.cfg.outputs.ready == 'true' && github.event.schedule == '*/15 * * * *'
+        run: python -m scraper --has-requests
+
+      - name: Navigateur (pour les sites en JavaScript)
+        if: steps.cfg.outputs.ready == 'true' && (github.event.schedule != '*/15 * * * *' || steps.req.outputs.pending == 'true')
+        run: python -m playwright install --with-deps chromium
+
+      - name: Passage du robot
+        if: steps.cfg.outputs.ready == 'true' && (github.event.schedule != '*/15 * * * *' || steps.req.outputs.pending == 'true')
+        env:
+          CAPTURE_DIR: captures
+          RUN_TRIGGER: ${{ github.event_name == 'workflow_dispatch' && 'manuel' || 'planifié' }}
+          SCHEDULE: ${{ github.event.schedule }}
+          ONLY: ${{ inputs.only }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set --
+          if [ "$SCHEDULE" = "*/15 * * * *" ]; then set -- "$@" --requests-only; fi
+          if [ -n "$ONLY" ]; then set -- "$@" --only "$ONLY"; fi
+          if [ "$DRY_RUN" = "true" ]; then set -- "$@" --dry-run; fi
+          python -m scraper "$@"
+
+      - name: Pages lues (pour corriger un lecteur)
+        if: always() && hashFiles('captures/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-lues-${{ github.run_id }}
+          path: captures/
+          retention-days: 3
+
+      # GitHub coupe les tâches planifiées d'un dépôt sans commit depuis 60 jours.
+      - name: Keepalive
+        if: steps.cfg.outputs.ready == 'true' && github.event.schedule == '17 6,12,18 * * *'
+        run: |
+          last=$(git log -1 --format=%ct)
+          now=$(date +%s)
+          if [ $(( (now - last) / 86400 )) -ge 50 ]; then
+            git config user.name "tracker-stages-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "keepalive : garde la veille planifiée active"
+            git push
+          fi

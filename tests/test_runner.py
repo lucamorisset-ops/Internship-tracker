@@ -1,0 +1,96 @@
+"""End-to-end pass on a LocalStore with fake parsers (no network)."""
+from datetime import date
+
+import scraper.parsers as parsers
+from scraper.http import RobotsDisallowed
+from scraper.models import SourceResult
+from scraper.notify import Notifier
+from scraper.parsers.base import BaseParser
+from scraper.runner import run
+from scraper.store import LocalStore
+
+from conftest import FakeFetcher
+
+STATE = {"offers": []}
+
+
+class ListParser(BaseParser):
+    name = "fake_list"
+    method = "html"
+    detail_pages = False
+
+    def read(self, source):
+        res = self.result(source)
+        res.urls_read.append("https://x.test/list")
+        for ext, title in STATE["offers"]:
+            res.offers.append(self.offer(source, ext_id=ext, title=title, url=f"https://x.test/o/{ext}",
+                                         location="Paris", contract="Stage"))
+        return res
+
+
+class RobotsParser(BaseParser):
+    name = "fake_robots"
+
+    def read(self, source):
+        raise RobotsDisallowed("https://blocked.test/careers")
+
+
+def _install(monkeypatch):
+    import sys
+    import types
+
+    for name, cls in (("fake_list", ListParser), ("fake_robots", RobotsParser)):
+        mod = types.ModuleType(f"scraper.parsers.{name}")
+        mod.Parser = cls
+        sys.modules[f"scraper.parsers.{name}"] = mod
+        monkeypatch.setitem(parsers.REGISTRY, name, name)
+
+
+def _store(tmp_path):
+    return LocalStore(tmp_path / "db.json", sources=[
+        {"id": "acme", "company": "Acme AM", "rank": 1, "kind": "fake_list", "status": "ok", "enabled": True},
+        {"id": "blk", "company": "Blocked Bank", "rank": 2, "kind": "fake_robots", "status": "ok", "enabled": True},
+    ])
+
+
+def test_full_pass(tmp_path, monkeypatch):
+    _install(monkeypatch)
+    store = _store(tmp_path)
+    notif = Notifier(None, dry_run=True)
+    STATE["offers"] = [("1", "Stage Assistant gérant actions - Janvier 2027"),
+                       ("2", "Stage Juriste")]
+    s = run(store, notif, use_browser=False, fetcher=FakeFetcher({}), today=date(2026, 11, 8))
+    offers = {o["id"]: o for o in store.db["offers"]}
+    assert offers["acme:1"]["relevance"] == "cible"
+    assert offers["acme:2"]["relevance"] == "exclue"
+    assert s["totals"]["new"] == 2 and s["totals"]["resiste"] == 1
+    blk = next(x for x in store.db["sources"] if x["id"] == "blk")
+    assert blk["status"] == "resiste" and "robots.txt" in blk["reason"]
+    titles = [m["title"] for m in notif.sent]
+    assert any("Assistant gérant" in t for t in titles)            # new target offer pushed
+    assert any("résistent" in t for t in titles)                    # resisting site pushed
+
+    # second pass: offer 1 disappears -> closed; offer 3 new; no duplicate push for 2
+    STATE["offers"] = [("2", "Stage Juriste"), ("3", "Stage Analyste ESG - Mars 2027")]
+    store.db["sources"][0]["status"] = "ok"
+    store.db["sources"][1]["status"] = "resiste"
+    notif2 = Notifier(None, dry_run=True)
+    s2 = run(store, notif2, use_browser=False, fetcher=FakeFetcher({}), today=date(2026, 11, 9))
+    offers = {o["id"]: o for o in store.db["offers"]}
+    assert offers["acme:1"]["closed"] is True and offers["acme:1"]["closed_on"] == "2026-11-09"
+    assert offers["acme:3"]["relevance"] == "proche"
+    assert s2["totals"]["new"] == 1 and s2["totals"]["closed"] == 1
+    assert not any("résistent" in m["title"] for m in notif2.sent)  # unchanged status: no repeat
+    assert len(store.db["runs"]) == 2
+
+
+def test_empty_read_does_not_close_everything(tmp_path, monkeypatch):
+    _install(monkeypatch)
+    store = _store(tmp_path)
+    STATE["offers"] = [(str(i), f"Stage analyste actions {i}") for i in range(5)]
+    run(store, Notifier(None, dry_run=True), use_browser=False, fetcher=FakeFetcher({}), only=["acme"])
+    STATE["offers"] = []
+    run(store, Notifier(None, dry_run=True), use_browser=False, fetcher=FakeFetcher({}), only=["acme"])
+    assert not any(o["closed"] for o in store.db["offers"])
+    acme = next(x for x in store.db["sources"] if x["id"] == "acme")
+    assert acme["status"] == "partiel"

@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+captures/
+data/
+setup.sql
+*.local.json
+.env

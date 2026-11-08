@@ -1,0 +1,81 @@
+"""robots.txt handling on the real rules captured on 08/11/2026."""
+from scraper.robots import Robots as Protego
+
+from scraper.http import BOT_NAME, Fetcher, looks_like_challenge
+
+BNP = """User-agent: *
+Disallow: *?as_url_id*
+Disallow: *?ref*
+Disallow: *?NumPage*
+Disallow: *?$
+Disallow: *?q
+"""
+MS = """User-agent: *
+Disallow: /*/agent/
+Disallow: /*/ats/
+Disallow: /*/channel/
+Crawl-delay: 10
+User-agent: Bytespider
+User-agent: ClaudeBot
+User-agent: GPTBot
+Disallow: /
+"""
+GS = """# Allow crawlers on roles
+User-agent: *
+Allow: /roles/
+# Disallow crawlers on other pages
+User-agent: *
+Disallow: /
+"""
+PICTET = "User-agent: *\nDisallow: /\nDisallow: /*company\nAllow: /login\n"
+
+
+def test_bnp_wildcards():
+    rp = Protego.parse(BNP)
+    base = "https://group.bnpparibas/emploi-carriere/toutes-offres-emploi/stage/bnp-paribas-asset-management"
+    assert rp.can_fetch(base, BOT_NAME)
+    assert not rp.can_fetch(base + "?q=analyste", BOT_NAME)
+    assert not rp.can_fetch(base + "?", BOT_NAME)
+
+
+def test_ms_crawl_delay_and_our_agent():
+    rp = Protego.parse(MS)
+    url = "https://morganstanley.tal.net/vx/lang-en-GB/mobile-0/brand-2/candidate/jobboard/vacancy/1/adv/"
+    assert rp.can_fetch(url, BOT_NAME)
+    assert rp.crawl_delay(BOT_NAME) == 10
+    assert not rp.can_fetch(url, "ClaudeBot")
+
+
+def test_gs_only_roles():
+    rp = Protego.parse(GS)
+    assert rp.can_fetch("https://higher.gs.com/roles/170901", BOT_NAME)
+    assert not rp.can_fetch("https://higher.gs.com/campus?LOCATION=Paris|London", BOT_NAME)
+
+
+def test_pictet_everything_forbidden():
+    rp = Protego.parse(PICTET)
+    assert not rp.can_fetch("https://career012.successfactors.eu/career?company=banquepict", BOT_NAME)
+
+
+def test_robots_status_codes(monkeypatch):
+    f = Fetcher(min_delay=0)
+
+    class R:
+        def __init__(self, code, text="", ctype="text/plain"):
+            self.status_code, self.text, self.headers = code, text, {"content-type": ctype}
+
+    answers = {"https://a.test": R(404), "https://b.test": R(503), "https://c.test": R(403),
+               "https://d.test": R(200, "<html>oops</html>", "text/html")}
+    monkeypatch.setattr(f.session, "get", lambda url, **kw: answers[url.rsplit("/robots.txt", 1)[0]])
+    assert f.allowed("https://a.test/x")       # 404: no robots.txt -> allowed (RFC 9309)
+    assert not f.allowed("https://b.test/x")   # 5xx -> assume disallow
+    assert f.allowed("https://c.test/x")       # 4xx (JP Morgan answers 403) -> allowed
+    assert f.allowed("https://d.test/x")       # HTML instead of robots.txt -> treated as none
+
+
+def test_challenge_detection():
+    carmignac = ("<html lang=\"en\"><head></head><body><script>window.location.href='/redirect_X/en-fr/about-us/careers';"
+                 "</script><noscript>This website requires JS enabled and cookies</noscript></body></html>")
+    assert looks_like_challenge(carmignac, 200)
+    assert looks_like_challenge("Forbidden", 403)
+    assert not looks_like_challenge("<html>" + "x" * 60000 + "</html>", 200)

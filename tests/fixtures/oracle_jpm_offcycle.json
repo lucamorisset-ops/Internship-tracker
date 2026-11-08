@@ -1,0 +1,14 @@
+{"items":[{"Keyword":"\"off-cycle\"","TotalJobsCount":3,"Offset":0,"Limit":25,"SortBy":"POSTING_DATES_DESC","SiteNumber":"CX_1001",
+ "requisitionList":[
+  {"Id":"210807156","Title":"Vice President - Asset Managers & Funds Credit Risk","PostedDate":"2026-10-28","PostingEndDate":null,
+   "PrimaryLocation":"London, United Kingdom","PrimaryLocationCountry":"GB","ShortDescriptionStr":"Credit risk coverage of asset managers and funds.","JobFamily":"Risk","JobFunction":"Credit Risk",
+   "ContractType":null,"JobType":null,"WorkerType":null,"StudyLevel":null,"secondaryLocations":[]},
+  {"Id":"210802076","Title":"2027 Commercial & Investment Banking - Global Markets - Off-cycle Internship – Paris","PostedDate":"2026-10-22","PostingEndDate":null,
+   "PrimaryLocation":"Paris, France","PrimaryLocationCountry":"FR","ShortDescriptionStr":"Six-month off-cycle internship in Global Markets.","JobFamily":"Markets","JobFunction":"Markets",
+   "ContractType":null,"JobType":null,"WorkerType":null,"StudyLevel":null,"secondaryLocations":[]},
+  {"Id":"210802419","Title":"2027 Commercial & Investment Banking - Sales - Off-cycle Internship - Paris",
+   "PostedDate":"2026-10-22","PostingEndDate":null,"PrimaryLocation":"Paris, France",
+   "PrimaryLocationCountry":"FR","ShortDescriptionStr":"Join our Sales team for a six-month off-cycle internship.","JobFamily":"Sales","JobFunction":"Markets",
+   "ContractType":null,"JobType":null,"WorkerType":null,"StudyLevel":null,
+   "secondaryLocations":[{"CountryCode":"US","Name":"New York, NY, United States"}]}
+ ]}],"count":1,"hasMore":false,"limit":25,"offset":0}

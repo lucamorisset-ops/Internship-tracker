@@ -1,0 +1,21 @@
+{"offset":0,"limit":100,"totalFound":4,"content":[
+ {"id":"744000154970480","name":"Stage Assistant de gestion (Quantitative, Finance, Data & IA) – 6 mois – S1 2027","uuid":"0f1e2d3c-0000-4000-8000-000000000003",
+  "releasedDate":"2026-10-21T14:30:00.000Z","location":{"city":"Paris","region":"Île-de-France","country":"fr","remote":false,"fullLocation":"Paris, Île-de-France, France"},
+  "industry":{"id":"investment_management","label":"Investment Management"},"department":{"id":"1","label":"Gestion"},
+  "typeOfEmployment":{"id":"intern","label":"Internship"},"experienceLevel":{"id":"internship","label":"Internship"},
+  "company":{"identifier":"SycomoreAssetManagement","name":"Sycomore Asset Management"},
+  "ref":"https://api.smartrecruiters.com/v1/companies/SycomoreAssetManagement/postings/744000154970480"},
+ {"id":"744000154965945","name":"Stage Analyste ESG – 6 mois à compter de janvier 2027",
+  "releasedDate":"2026-10-15T08:00:00.000Z","location":{"city":"Paris","country":"fr"},
+  "typeOfEmployment":{"id":"intern","label":"Internship"},
+  "company":{"identifier":"SycomoreAssetManagement","name":"Sycomore Asset Management"},
+  "ref":"https://api.smartrecruiters.com/v1/companies/SycomoreAssetManagement/postings/744000154965945"},
+ {"id":"744000154486600","name":"Stage 6 mois – Analyste Crédit","releasedDate":"2026-10-08T09:12:00.000Z",
+  "location":{"city":"Paris","country":"fr","fullLocation":"Paris, Île-de-France, France"},
+  "typeOfEmployment":{"id":"intern","label":"Internship"},"company":{"identifier":"SycomoreAssetManagement","name":"Sycomore Asset Management"},
+  "ref":"https://api.smartrecruiters.com/v1/companies/SycomoreAssetManagement/postings/744000154486600"},
+ {"id":"744000150123456","name":"Chargé(e) de Middle Office (CDI)","releasedDate":"2026-09-01T10:00:00.000Z",
+  "location":{"city":"Paris","country":"fr","fullLocation":"Paris, Île-de-France, France"},
+  "typeOfEmployment":{"id":"permanent","label":"Permanent"},"company":{"identifier":"SycomoreAssetManagement","name":"Sycomore Asset Management"},
+  "ref":"https://api.smartrecruiters.com/v1/companies/SycomoreAssetManagement/postings/744000150123456"}
+]}
