@@ -285,6 +285,11 @@ def _notify(notifier: Notifier, hits: list[Offer], changes: list[tuple[dict, Sou
 
 
 # ------------------------------------------------------------------ CLI
+def _env(name: str) -> str:
+    """Environment value without surrounding whitespace, quotes or line breaks."""
+    return (os.environ.get(name) or "").strip().strip('"').strip("'").strip()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m scraper")
     ap.add_argument("--only", help="ids de sources séparés par des virgules")
@@ -302,7 +307,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.local:
         store = LocalStore(args.local)
     else:
-        url, key = os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SECRET_KEY")
+        # secrets pasted in GitHub often carry a trailing newline or spaces
+        url, key = _env("SUPABASE_URL"), _env("SUPABASE_SECRET_KEY")
         if not url or not key:
             print("SUPABASE_URL et SUPABASE_SECRET_KEY sont nécessaires (ou --local).", file=sys.stderr)
             return 2
@@ -326,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
         only = req_only
     trigger = "demande du site" if pending and args.requests_only else args.trigger
 
-    notifier = Notifier(os.environ.get("NTFY_TOPIC"), os.environ.get("SITE_URL", ""), dry_run=args.dry_run)
+    notifier = Notifier(_env("NTFY_TOPIC"), _env("SITE_URL"), dry_run=args.dry_run)
     summary = run(store, notifier, only=only, trigger=trigger, capture_dir=env_capture_dir(),
                   use_browser=not args.no_browser)
     store.finish_requests([r["id"] for r in pending if "id" in r],
