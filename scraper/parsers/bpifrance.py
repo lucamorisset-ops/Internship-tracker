@@ -182,7 +182,8 @@ def _has_class(el: Tag, keys: tuple[str, ...]) -> bool:
     return False
 
 
-def _describe(card: Tag, title: str) -> dict:
+def _describe(card: Tag, title: str, today: date) -> dict:
+    """location, contract, published date / label and the other short texts of the card."""
     out = {"location": "", "contract": "", "published": None, "published_label": "", "rest": []}
     time_el = card.find("time")
     if time_el is not None:

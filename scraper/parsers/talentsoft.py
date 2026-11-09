@@ -55,6 +55,8 @@ class Parser(BaseParser):
         res = self.result(source)
         p = self.params(source)
         urls = p.get("urls") or ([p["url"]] if p.get("url") else [source["catalog_url"]])
+        if isinstance(urls, str):
+            urls = [urls]
         max_pages = max(1, int(p.get("max_pages") or 4))
         seen: set[str] = set()
         failures: list[Exception] = []

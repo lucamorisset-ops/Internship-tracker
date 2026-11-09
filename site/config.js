@@ -15,4 +15,4 @@
 // du robot (SUPABASE_SECRET_KEY).
 
 export const SUPABASE_URL = "https://whitghcavsimmfuvziry.supabase.co";
-export const SUPABASE_PUBLISHABLE_KEY = "REMPLACER_PAR_LA_PUBLISHABLE_KEY";
+export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_H9Sx5UMY60p71I6IT_emxQ_nPejBeEL";
