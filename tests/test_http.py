@@ -79,3 +79,30 @@ def test_challenge_detection():
     assert looks_like_challenge(carmignac, 200)
     assert looks_like_challenge("Forbidden", 403)
     assert not looks_like_challenge("<html>" + "x" * 60000 + "</html>", 200)
+
+
+def test_redirect_to_forbidden_page_is_not_followed(monkeypatch):
+    """A closed Goldman Sachs role redirecting to /campus (forbidden) must not be read."""
+    import pytest
+    import requests
+    from scraper.http import RobotsDisallowed
+    from scraper.robots import Robots
+
+    f = Fetcher(min_delay=0)
+    monkeypatch.setattr(f, "robots_for", lambda url: Robots.parse(GS))
+    calls = []
+
+    def fake(method, url, **kw):
+        calls.append(url)
+        r = requests.Response()
+        r.url = url
+        if url.endswith("/roles/1"):
+            r.status_code, r.headers["location"] = 302, "/campus?page=1"
+        else:
+            r.status_code, r._content = 200, b"campus"
+        return r
+
+    monkeypatch.setattr(f.session, "request", fake)
+    with pytest.raises(RobotsDisallowed):
+        f.get("https://higher.gs.com/roles/1", retries=0)
+    assert calls == ["https://higher.gs.com/roles/1"]

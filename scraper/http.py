@@ -178,8 +178,10 @@ class Fetcher:
         for attempt in range(retries + 1):
             self._wait(host, delay)
             try:
-                r = self.session.request(method, url, params=params, headers=headers,
-                                         data=data, json=json_body, timeout=TIMEOUT)
+                r = self._follow(method, url, params=params, headers=headers, data=data,
+                                 json_body=json_body, check_robots=check_robots)
+            except RobotsDisallowed:
+                raise
             except requests.RequestException as e:
                 last_exc = e
                 time.sleep(3 * (attempt + 1))
@@ -194,6 +196,25 @@ class Fetcher:
                 continue
             raise FetchError(full, r.status_code, "page anti-robot" if looks_like_challenge(text, r.status_code) else "")
         raise FetchError(full, None, str(last_exc or ""))
+
+    def _follow(self, method: str, url: str, *, params, headers, data, json_body,
+                check_robots: bool, max_hops: int = 5) -> requests.Response:
+        """Send the request and follow redirects by hand, checking robots.txt at each hop."""
+        r = self.session.request(method, url, params=params, headers=headers, data=data,
+                                 json=json_body, timeout=TIMEOUT, allow_redirects=False)
+        hops = 0
+        while r.is_redirect and hops < max_hops:
+            nxt = requests.compat.urljoin(r.url, r.headers.get("location", ""))
+            if check_robots and not self.allowed(nxt):
+                self.log.append({"url": nxt, "status": "robots"})
+                raise RobotsDisallowed(nxt, unreachable=self.robots_unreachable(nxt))
+            if r.status_code == 303 or (r.status_code in (301, 302) and method != "HEAD"):
+                method, data, json_body = "GET", None, None
+            self._wait(self._host(nxt), self._crawl_delay(nxt))
+            r = self.session.request(method, nxt, headers=headers, data=data, json=json_body,
+                                     timeout=TIMEOUT, allow_redirects=False)
+            hops += 1
+        return r
 
     def _capture(self, url: str, status: int, text: str) -> None:
         if not self.capture_dir:

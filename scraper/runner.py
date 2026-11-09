@@ -142,7 +142,8 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
             for off in res.offers:
                 # by id first; by URL only when that URL is specific to this offer
                 known = by_key.get((src["id"], "id:" + off.id))
-                if not known and off.url_key and url_count.get(off.url_key) == 1:
+                if (not known and off.url_key and url_count.get(off.url_key) == 1
+                        and not off.extra.get("fixed")):   # page_watch alerts all share the page URL
                     known = by_key.get((src["id"], off.url_key))
                 if known:
                     seen_ids.append(known["id"])
