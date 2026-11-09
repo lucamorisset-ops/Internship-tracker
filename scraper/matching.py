@@ -116,7 +116,8 @@ INTERNSHIP_TERMS = r"\bstage\b|stagiaire|\bintern\b|internship|off[- ]?cycle|sea
 # ---------------------------------------------------------------- places
 PARIS_TERMS = (r"paris|ile[- ]de[- ]france|\bidf\b|la defense|puteaux|courbevoie|neuilly|boulogne|"
                r"levallois|saint[- ]cloud|issy|montrouge|nanterre|saint[- ]denis|charenton|clichy|"
-               r"\(75\)|\(92\)|\b75\d{3}\b|\b92\d{3}\b")
+               r"maisons[- ]alfort|val[- ]de[- ]marne|hauts[- ]de[- ]seine|seine[- ]saint[- ]denis|"
+               r"\((75|92|93|94)\)|\b(75|92|93|94)\d{3}\b")
 LONDON_TERMS = r"london|londres"
 FRANCE_TERMS = r"^\s*france\s*$|\bfr\b$"
 UK_TERMS = r"united kingdom|royaume[- ]uni|\bengland\b|\buk\b|\bgb\b"

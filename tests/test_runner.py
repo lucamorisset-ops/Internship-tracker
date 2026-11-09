@@ -94,3 +94,26 @@ def test_empty_read_does_not_close_everything(tmp_path, monkeypatch):
     assert not any(o["closed"] for o in store.db["offers"])
     acme = next(x for x in store.db["sources"] if x["id"] == "acme")
     assert acme["status"] == "partiel"
+
+
+def test_same_url_different_offers(tmp_path, monkeypatch):
+    """Carmignac: every row points to the careers page; rows must stay distinct."""
+    _install(monkeypatch)
+    store = _store(tmp_path)
+
+    class SameUrl(ListParser):
+        def read(self, source):
+            res = self.result(source)
+            for ext, title in STATE["offers"]:
+                res.offers.append(self.offer(source, ext_id=ext, title=title, url="https://x.test/careers",
+                                             location="Paris", contract="Internship"))
+            return res
+
+    import sys
+    sys.modules["scraper.parsers.fake_list"].Parser = SameUrl
+    STATE["offers"] = [("a", "Equity Analyst Intern"), ("b", "Fixed Income Intern")]
+    run(store, Notifier(None, dry_run=True), use_browser=False, fetcher=FakeFetcher({}), only=["acme"])
+    STATE["offers"] = [("a", "Equity Analyst Intern"), ("b", "Fixed Income Intern"), ("c", "Quant Intern")]
+    s = run(store, Notifier(None, dry_run=True), use_browser=False, fetcher=FakeFetcher({}), only=["acme"])
+    assert sorted(o["id"] for o in store.db["offers"]) == ["acme:a", "acme:b", "acme:c"]
+    assert s["totals"]["new"] == 1 and not any(o["closed"] for o in store.db["offers"])

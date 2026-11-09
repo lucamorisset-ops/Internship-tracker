@@ -79,9 +79,14 @@ def read_source(parser, source: dict) -> SourceResult:
 
 
 def _dedupe(offers: list[Offer]) -> list[Offer]:
+    """Same offer read twice (two lists, two searches) -> keep one, by id.
+
+    Offers sharing one URL but with different ids (e.g. Carmignac: every row
+    points to the careers page) are distinct and all kept.
+    """
     seen: dict[str, Offer] = {}
     for o in offers:
-        seen.setdefault(o.url_key or o.id, o)
+        seen.setdefault(o.id, o)
     return list(seen.values())
 
 
@@ -131,8 +136,14 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
             new_offers: list[Offer] = []
             seen_ids: list[str] = []
             details = 0
+            url_count: dict[str, int] = {}
             for off in res.offers:
-                known = by_key.get((src["id"], off.url_key)) or by_key.get((src["id"], "id:" + off.id))
+                url_count[off.url_key] = url_count.get(off.url_key, 0) + 1
+            for off in res.offers:
+                # by id first; by URL only when that URL is specific to this offer
+                known = by_key.get((src["id"], "id:" + off.id))
+                if not known and off.url_key and url_count.get(off.url_key) == 1:
+                    known = by_key.get((src["id"], off.url_key))
                 if known:
                     seen_ids.append(known["id"])
                     continue

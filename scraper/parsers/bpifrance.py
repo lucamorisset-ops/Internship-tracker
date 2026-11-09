@@ -172,12 +172,14 @@ def _leaves(card: Tag) -> list[tuple[Tag, str]]:
 
 
 def _has_class(el: Tag, keys: tuple[str, ...]) -> bool:
+    """A class name of the element or its parent contains one of the keys as a word
+    ("tag--location", "card__date"; not "opacity-75" for "city")."""
+    rx = re.compile(r"(?:^|[-_\s])(?:%s)(?:$|[-_\s])" % "|".join(map(re.escape, keys)))
     node: Tag | None = el
     for _ in range(2):   # the element or its direct parent (e.g. <li class="tag--location"><span>)
         if node is None:
             break
-        cls = " ".join(node.get("class") or []).lower()
-        if any(k in cls for k in keys):
+        if rx.search(" ".join(node.get("class") or []).lower()):
             return True
         node = node.parent
     return False
