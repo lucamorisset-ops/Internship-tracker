@@ -156,8 +156,7 @@ class Parser(BaseParser):
                 return
             host, site = m.group(1), m.group(2)
         url = details_url(host, site, offer.ext_id)
-        r = self.ctx.fetcher.get(url, headers=JSON_HEADERS, retries=1)
-        res.details_read.append(url)
+        r = self.detail_get(url, res, headers=JSON_HEADERS, retries=1)
         data = decode_json(r)
         items = data.get("items") or [] if isinstance(data, dict) else []
         if not items or not isinstance(items[0], dict):

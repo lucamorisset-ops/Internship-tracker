@@ -78,6 +78,10 @@ class Parser(BaseParser):
             try:
                 r = self.get(u, res, accept_status=(200, 404, 410), retries=1)
             except RobotsDisallowed as e:
+                if not e.unreachable and _redirected_away(u, e.url):
+                    # the role page now redirects to the search page (forbidden, not read): role closed
+                    res.closed_urls.append(u)
+                    continue
                 res.blocked_by_robots.append(e.url)
                 errors.append(e)
                 continue

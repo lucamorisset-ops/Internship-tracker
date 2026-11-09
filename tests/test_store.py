@@ -44,3 +44,20 @@ def test_calls(monkeypatch):
 def test_legacy_key_uses_bearer():
     s = SupabaseStore("https://abc.supabase.co", "eyJhbGciOi.legacy.jwt")
     assert s.s.headers["Authorization"].startswith("Bearer ")
+
+
+def test_schema_column_grants_are_not_bypassed_by_table_grants():
+    """Supabase grants ALL on new tables to `authenticated`: a column grant (insert (sources))
+    only restricts anything if the table-wide privilege is revoked first."""
+    import re
+    from pathlib import Path
+
+    sql = (Path(__file__).resolve().parents[1] / "supabase" / "schema.sql").read_text("utf-8")
+    revoked = {(priv, table) for privs, tables in
+               re.findall(r"revoke ([a-z, ]+) on ([a-z_., ]+?) from authenticated", sql)
+               for priv in re.split(r",\s*", privs) for table in re.split(r",\s*", tables)}
+    column_grants = re.findall(r"grant (?:[a-z, ]*?\b)?(insert|update) \([^)]*\) on (public\.[a-z_]+) to authenticated",
+                               sql)
+    assert len(column_grants) == 4
+    for priv, table in column_grants:
+        assert (priv, table) in revoked or ("all", table) in revoked, (priv, table)

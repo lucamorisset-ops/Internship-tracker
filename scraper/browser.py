@@ -42,9 +42,20 @@ class Browser:
         host = self.fetcher._host(url)
         self.fetcher._wait(host, self.fetcher._crawl_delay(url))
         page = self._context.new_page()
+        blocked: list[str] = []          # URLs the page asked for that robots.txt forbids (never loaded)
+        page.route("**/*", self._robots_guard(page, host, blocked))
         try:
-            resp = page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+            try:
+                resp = page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+            except Exception as e:  # noqa: BLE001 - timeout, network: the runner explains it
+                self.fetcher.log.append({"url": url, "status": "erreur", "via": "navigateur"})
+                raise FetchError(url, None, f"navigateur : {type(e).__name__}") from None
             status = resp.status if resp else 0
+            final = page.url or url        # chrome-error://... after a navigation stopped by the guard
+            if final != url and final.startswith(("http://", "https://")) and not self.fetcher.allowed(final):
+                # HTTP redirect (Playwright cannot stop it): the forbidden page is not used
+                self.fetcher.log.append({"url": final, "status": "robots", "via": "navigateur"})
+                raise RobotsDisallowed(final, unreachable=self.fetcher.robots_unreachable(final))
             if wait_for:
                 try:
                     page.wait_for_selector(wait_for, timeout=timeout_ms)
@@ -52,6 +63,9 @@ class Browser:
                     html = page.content()
                     self.fetcher._capture(url, status, html)
                     self.fetcher.log.append({"url": url, "status": status, "via": "navigateur"})
+                    if blocked:     # the content needed a page robots.txt forbids (JavaScript redirect, data)
+                        self.fetcher.log.append({"url": blocked[0], "status": "robots", "via": "navigateur"})
+                        raise RobotsDisallowed(blocked[0], unreachable=self.fetcher.robots_unreachable(blocked[0]))
                     detail = "page anti-robot" if looks_like_challenge(html, status) else \
                         f"élément « {wait_for} » introuvable"
                     raise FetchError(url, status, detail)
@@ -67,6 +81,21 @@ class Browser:
         finally:
             page.close()
 
+    def _robots_guard(self, page, host: str, blocked: list[str]) -> Callable:
+        """Route handler: neither a navigation of the page (JavaScript redirect...) nor a request
+        to the site itself (data loaded by its scripts) goes to a URL that robots.txt forbids;
+        such URLs are not loaded and are recorded in `blocked`."""
+        def handler(route) -> None:
+            u = route.request.url
+            checked = u.startswith(("http://", "https://")) and (
+                self.fetcher._host(u) == host or _main_navigation(route.request, page))
+            if checked and not self.fetcher.allowed(u):
+                blocked.append(u)
+                route.abort()
+            else:
+                route.continue_()
+        return handler
+
     def close(self) -> None:
         try:
             if self._context:
@@ -78,6 +107,13 @@ class Browser:
         except Exception as e:  # noqa: BLE001
             log.debug("browser close: %s", e)
         self._pw = self._browser = self._context = None
+
+
+def _main_navigation(request, page) -> bool:
+    try:
+        return request.is_navigation_request() and request.frame == page.main_frame
+    except Exception:  # noqa: BLE001 - e.g. service worker request without frame
+        return False
 
 
 class LazyBrowser:

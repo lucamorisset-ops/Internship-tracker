@@ -106,3 +106,41 @@ def test_redirect_to_forbidden_page_is_not_followed(monkeypatch):
     with pytest.raises(RobotsDisallowed):
         f.get("https://higher.gs.com/roles/1", retries=0)
     assert calls == ["https://higher.gs.com/roles/1"]
+
+
+def test_redirect_to_forbidden_page_names_the_page_that_redirected(monkeypatch):
+    import pytest
+    import requests
+    from scraper.http import RobotsDisallowed
+    from scraper.robots import Robots
+
+    f = Fetcher(min_delay=0)
+    monkeypatch.setattr(f, "robots_for", lambda url: Robots.parse(GS))
+
+    def fake(method, url, **kw):
+        r = requests.Response()
+        r.url, r.status_code, r.headers["location"] = url, 302, "/campus?page=1"
+        return r
+
+    monkeypatch.setattr(f.session, "request", fake)
+    with pytest.raises(RobotsDisallowed) as e:
+        f.get("https://higher.gs.com/roles/1", retries=0)
+    assert e.value.via == "https://higher.gs.com/roles/1"
+    assert [x["url"] for x in f.log] == ["https://higher.gs.com/roles/1", "https://higher.gs.com/campus?page=1"]
+
+
+def test_crawl_delay_is_obeyed_in_full_or_the_host_is_not_read(monkeypatch):
+    import pytest
+    from scraper.http import FetchError
+    from scraper.robots import Robots
+
+    f = Fetcher(min_delay=2)
+    rules = {"https://slow.test": "User-agent: *\nCrawl-delay: 30\n",
+             "https://very-slow.test": "User-agent: *\nCrawl-delay: 120\n"}
+    monkeypatch.setattr(f, "robots_for", lambda url: Robots.parse(rules.get(f._host(url), "")))
+    assert f._crawl_delay("https://slow.test/jobs") == 30        # not shortened
+    assert f._crawl_delay("https://other.test/jobs") == 2        # no Crawl-delay: our own minimum
+    monkeypatch.setattr(f.session, "request", lambda *a, **kw: pytest.fail("must not be requested"))
+    with pytest.raises(FetchError) as e:
+        f.get("https://very-slow.test/jobs")
+    assert "Crawl-delay de 120 s" in e.value.detail

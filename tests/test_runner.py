@@ -117,3 +117,43 @@ def test_same_url_different_offers(tmp_path, monkeypatch):
     s = run(store, Notifier(None, dry_run=True), use_browser=False, fetcher=FakeFetcher({}), only=["acme"])
     assert sorted(o["id"] for o in store.db["offers"]) == ["acme:a", "acme:b", "acme:c"]
     assert s["totals"]["new"] == 1 and not any(o["closed"] for o in store.db["offers"])
+
+
+def test_failed_source_keeps_the_urls_it_tried(tmp_path, monkeypatch):
+    """A site that resists half-way: the pages already read and the refused one stay visible."""
+    _install(monkeypatch)
+    store = _store(tmp_path)
+
+    class TwoPages(BaseParser):
+        def read(self, source):
+            res = self.result(source)
+            self.get("https://x.test/list", res)
+            self.get("https://x.test/list?page=2", res)
+            return res
+
+    import sys
+    sys.modules["scraper.parsers.fake_list"].Parser = TwoPages
+    fetcher = FakeFetcher({r"/list$": (200, "<html></html>"), r"page=2": (403, "Forbidden")})
+    run(store, Notifier(None, dry_run=True), use_browser=False, fetcher=fetcher, only=["acme"])
+    acme = next(x for x in store.db["sources"] if x["id"] == "acme")
+    assert acme["status"] == "resiste"
+    assert acme["last_urls"] == ["https://x.test/list", "https://x.test/list?page=2"]
+
+
+def test_robots_failure_lists_the_forbidden_url(tmp_path, monkeypatch):
+    _install(monkeypatch)
+    store = _store(tmp_path)
+    run(store, Notifier(None, dry_run=True), use_browser=False, fetcher=FakeFetcher({}), only=["blk"])
+    blk = next(x for x in store.db["sources"] if x["id"] == "blk")
+    assert blk["last_urls"] == ["https://blocked.test/careers"]
+
+
+def test_crawl_delay_too_long_is_explained():
+    from scraper.http import FetchError
+    from scraper.runner import explain_failure
+
+    status, reason, fix = explain_failure(
+        FetchError("https://slow.test/jobs", None, "Crawl-delay de 120 s demandé par robots.txt"))
+    assert status == "resiste"
+    assert reason.startswith("Le fichier robots.txt de slow.test demande d'attendre plus de 60 secondes")
+    assert "alerte" in fix

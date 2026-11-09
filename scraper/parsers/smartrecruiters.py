@@ -82,8 +82,7 @@ class Parser(BaseParser):
             ref = f"{API.format(company=m.group(1))}/{offer.ext_id}"
         if not str(ref).startswith("https://api.smartrecruiters.com/"):
             return                      # only the official API, never an arbitrary URL
-        r = self.ctx.fetcher.get(ref, headers=JSON_HEADERS, retries=1)
-        res.details_read.append(ref)
+        r = self.detail_get(ref, res, headers=JSON_HEADERS, retries=1)
         d = decode_json(r)
         if not isinstance(d, dict):
             return

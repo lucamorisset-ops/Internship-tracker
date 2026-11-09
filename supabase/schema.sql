@@ -145,5 +145,5 @@ grant insert (id, company, rank, kind, params, catalog_url, read_urls, filters, 
 grant update (company, rank, catalog_url, criteria, note, enabled, status) on public.sources to authenticated;
 revoke insert, update, delete on public.runs, public.meta from authenticated;
 grant select on public.runs, public.meta to authenticated;
-revoke update, delete on public.run_requests from authenticated;
+revoke insert, update, delete on public.run_requests from authenticated;
 grant select, insert (sources) on public.run_requests to authenticated;

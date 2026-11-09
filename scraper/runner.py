@@ -19,7 +19,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from .browser import LazyBrowser
-from .http import Fetcher, FetchError, RobotsDisallowed, env_capture_dir
+from .http import MAX_CRAWL_DELAY, Fetcher, FetchError, RobotsDisallowed, env_capture_dir
 from .matching import classify
 from .models import Offer, SourceResult, url_key
 from .notify import Notifier
@@ -29,6 +29,7 @@ from .store import LocalStore, SupabaseStore, now_iso
 log = logging.getLogger("scraper")
 
 MAX_DETAILS_PER_SOURCE = 12
+METIER_ONLY = "métier hors critères"   # classify(): the only reason an offer was excluded
 ALERT_FIX = ("Crée une alerte e-mail sur le site carrières officiel de l'entreprise : "
              "c'est la seule façon fiable d'être prévenu pour ce site.")
 
@@ -47,6 +48,12 @@ def explain_failure(exc: Exception) -> tuple[str, str, str]:
                 "Le robot respecte cette règle et ne lit pas la page.",
                 ALERT_FIX)
     if isinstance(exc, FetchError):
+        if "Crawl-delay" in exc.detail:
+            return ("resiste",
+                    f"Le fichier robots.txt de {exc.url.split('/')[2]} demande d'attendre plus de "
+                    f"{MAX_CRAWL_DELAY:g} secondes entre deux pages ({exc.detail}). Le robot respecte "
+                    "cette règle et ne lit pas ce site.",
+                    ALERT_FIX)
         if exc.status in (401, 403, 429) or "anti-robot" in exc.detail:
             return ("resiste",
                     f"Le site refuse la lecture automatique (réponse {exc.status or '?'}"
@@ -65,12 +72,19 @@ def explain_failure(exc: Exception) -> tuple[str, str, str]:
 
 
 def read_source(parser, source: dict) -> SourceResult:
+    fetcher = getattr(getattr(parser, "ctx", None), "fetcher", None)
+    start = len(fetcher.log) if fetcher is not None else 0
     try:
         res = parser.read(source)
     except Exception as e:  # noqa: BLE001 - every failure becomes a report
         status, reason, fix = explain_failure(e)
         res = SourceResult(source_id=source["id"], ok=False, status=status, method=parser.method,
                            reason=reason, fix=fix, error=f"{type(e).__name__}: {e}")
+        # the URLs tried before the failure stay visible on the site (« URL essayées »)
+        tried = [x["url"] for x in (fetcher.log[start:] if fetcher is not None else []) if x.get("url")]
+        if getattr(e, "url", None):
+            tried.append(e.url)
+        res.urls_read = list(dict.fromkeys(tried))
         if isinstance(e, RobotsDisallowed) and not e.unreachable:
             res.blocked_by_robots.append(e.url)
         if not isinstance(e, (RobotsDisallowed, FetchError)):
@@ -134,8 +148,8 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
             assume_intern = bool((src.get("params") or {}).get("internships_only"))
 
             new_offers: list[Offer] = []
+            to_enrich: list[Offer] = []
             seen_ids: list[str] = []
-            details = 0
             url_count: dict[str, int] = {}
             for off in res.offers:
                 url_count[off.url_key] = url_count.get(off.url_key, 0) + 1
@@ -152,14 +166,22 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
                     new_offers.append(off)
                     continue
                 classify(off, criteria, today, assume_internship=assume_intern)
-                if off.relevance != "exclue" and parser is not None and details < MAX_DETAILS_PER_SOURCE:
-                    details += 1
-                    try:
-                        parser.enrich(off, res)
-                    except Exception as e:  # noqa: BLE001 - details are optional
-                        log.info("  fiche illisible %s: %s", off.url, e)
-                    classify(off, criteria, today, assume_internship=assume_intern)
+                second_chance = off.reasons == METIER_ONLY or (
+                    # companies added from the site: the list rarely says "stage", the offer page often does
+                    kind in ("auto", "generic")
+                    and set(off.reasons.split(" · ")) <= {"pas un stage", METIER_ONLY})
+                if off.relevance != "exclue" or second_chance:
+                    to_enrich.append(off)
                 new_offers.append(off)
+            # offer pages: interesting offers first, then internships whose title names no
+            # métier ("2027 Off-cycle Internship Program – EMEA"): the page often does
+            to_enrich.sort(key=lambda o: o.relevance == "exclue")
+            for off in to_enrich[:MAX_DETAILS_PER_SOURCE] if parser is not None else []:
+                try:
+                    parser.enrich(off, res)
+                except Exception as e:  # noqa: BLE001 - details are optional
+                    log.info("  fiche illisible %s: %s", off.url, e)
+                classify(off, criteria, today, assume_internship=assume_intern)
 
             # offers that disappeared from a complete, successful read are closed
             closed: list[str] = []

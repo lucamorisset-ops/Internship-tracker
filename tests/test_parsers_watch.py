@@ -377,3 +377,23 @@ def test_auto_falls_back_to_generic_reading(make_ctx):
     assert res.reason.startswith("Aucun logiciel de recrutement connu n'a été détecté sur cette page. Lecture générique")
     assert len(res.offers) == 3 and res.source_updates == {}
     assert ctx.fetcher.calls == ["https://www.exemple-gestion.fr/fr/carrieres/offres"]   # page read once
+
+
+def test_roles_watch_role_redirecting_to_the_forbidden_search_page_is_closed(make_ctx):
+    """A closed role sends to /campus, which robots.txt forbids: not read, but the role is gone."""
+    from scraper.http import RobotsDisallowed
+
+    ctx = make_ctx({r"/roles/170877$": "gs_role_open.html"}, robots=GS_ROBOTS)
+    real = ctx.fetcher.request
+
+    def request(method, url, **kw):
+        if url.endswith("/roles/170901"):
+            raise RobotsDisallowed("https://higher.gs.com/campus?page=1", via=url)
+        return real(method, url, **kw)
+
+    ctx.fetcher.request = request
+    res = get_parser("roles_watch", ctx).read(dict(GS, known_offers=_known(170877, 170901)))
+    assert res.closed_urls == ["https://higher.gs.com/roles/170901"]
+    assert res.blocked_by_robots == [] and res.error == ""
+    assert res.urls_read == ["https://higher.gs.com/roles/170877", "https://higher.gs.com/roles/170901"]
+    assert "1 toujours en ligne, 1 fermée(s)" in res.reason

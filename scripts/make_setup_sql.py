@@ -18,7 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scraper.models import url_key  # noqa: E402
+from scraper.models import slugify, url_key  # noqa: E402
+from scraper.parsers.base import clean_text  # noqa: E402
 
 PREFIX_TO_SOURCE = {"cmam": "lafrancaise"}
 MIROVA_IDS = {"21608": "20227", "22240": "20473", "22462": "20732"}
@@ -34,6 +35,8 @@ EXT_PATTERNS = {
     "amiral": r"/jobs/(\d+)",
     "gs": r"/roles/(\d+)",
     "dnca": r"/carrieres/([A-Z0-9]+)",
+    "db": r"/jobs/([^/?#]+)",           # yello drops ?job_board_id=..., the exported URL may keep it
+    "bnp": r"/(?:offre-emploi|job-offer)/([^/?#]+)",
 }
 
 
@@ -68,6 +71,8 @@ def offer_row(doc_id: str, d: dict) -> dict | None:
         ext, manual = "jt-" + (m.group(1) if m else doc_id.split("-", 1)[1]), True
     elif src == "moneta":
         ext, manual = "spontanee", True
+    elif src == "carmignac":        # no offer URL on the site: same id as the carmignac reader
+        ext = slugify(f"{clean_text(d.get('title'))}-{clean_text(d.get('location'))}")
     elif src in EXT_PATTERNS and re.search(EXT_PATTERNS[src], url):
         ext = re.search(EXT_PATTERNS[src], url).group(1)
     else:
@@ -107,7 +112,8 @@ def main() -> int:
              "\n-- ---------------------------------------------------------------- accès\n",
              f"insert into public.allowed_users(email) values ({q(a.email.lower())}) on conflict do nothing;\n",
              "\n-- ---------------------------------------------------------------- sources\n"]
-    for s in json.loads((ROOT / "supabase/sources_seed.json").read_text(encoding="utf-8")):
+    seed = json.loads((ROOT / "supabase/sources_seed.json").read_text(encoding="utf-8"))
+    for s in seed:
         cols = ["id", "company", "rank", "kind", "params", "catalog_url", "filters", "status"]
         vals = [s["id"], s["company"], s["rank"], s["kind"], s.get("params") or {}, s.get("catalog_url"),
                 s.get("filters"), "a_configurer"]
@@ -123,10 +129,14 @@ def main() -> int:
             r = offer_row(Path(f).stem, d)
             if not r:
                 continue
+            if r["source_id"] not in {s["id"] for s in seed}:
+                # an unknown entreprise would break the whole script (foreign key): skipped
+                print(f"offre ignorée, entreprise inconnue « {r['source_id']} » : {Path(f).name}", file=sys.stderr)
+                continue
             cols = [k for k, v in r.items() if v is not None]
             parts.append(
                 f"insert into public.offers ({', '.join(cols)}) values ({', '.join(q(r[c]) for c in cols)})\n"
-                f"  on conflict (id) do update set status = excluded.status, note = coalesce(public.offers.note, excluded.note);\n")
+                f"  on conflict (id) do nothing;\n")   # re-running never overwrites your follow-up
     Path(a.out).write_text("".join(parts), encoding="utf-8")
     print(f"écrit : {a.out}")
     return 0

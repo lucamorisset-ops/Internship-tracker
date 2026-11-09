@@ -38,7 +38,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-from ..http import Fetcher, FetchError, Response, looks_like_challenge
+from ..http import Fetcher, FetchError, Response, RobotsDisallowed, looks_like_challenge
 from ..models import Offer, SourceResult, slugify
 
 
@@ -68,7 +68,12 @@ class BaseParser:
         return p
 
     def get(self, url: str, res: SourceResult, **kw) -> Response:
-        r = self.ctx.fetcher.get(url, **kw)
+        try:
+            r = self.ctx.fetcher.get(url, **kw)
+        except (FetchError, RobotsDisallowed) as e:
+            if isinstance(e, FetchError) or e.via:    # requested: error, or redirect to a forbidden page
+                res.urls_read.append(_shown_url(url, kw.get("params")))
+            raise
         res.urls_read.append(_shown_url(url, kw.get("params")))
         return r
 
@@ -86,8 +91,12 @@ class BaseParser:
             raise FetchError(url, r.status, detail) from None
 
     def detail_get(self, url: str, res: SourceResult, **kw) -> Response:
-        """GET an offer page for enrich(): records it in res.details_read."""
-        r = self.ctx.fetcher.get(url, **kw)
+        """GET an offer page for enrich(): records it in res.details_read (also when the site answers an error)."""
+        try:
+            r = self.ctx.fetcher.get(url, **kw)
+        except FetchError:
+            res.details_read.append(url)
+            raise
         res.details_read.append(url)
         return r
 

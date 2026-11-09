@@ -33,17 +33,18 @@ BOT_NAME = "tracker-stages-bot"
 REPO_URL = "https://github.com/lucamorisset-ops/internship-tracker"
 USER_AGENT = f"Mozilla/5.0 (compatible; {BOT_NAME}/1.0; +{REPO_URL})"
 MIN_DELAY = 2.0          # seconds between two requests to the same host
-MAX_CRAWL_DELAY = 15.0   # we obey Crawl-delay up to this value
+MAX_CRAWL_DELAY = 60.0   # Crawl-delay obeyed in full up to this value; a host asking for more is not read
 TIMEOUT = 30
 
 
 class RobotsDisallowed(Exception):
-    def __init__(self, url: str, unreachable: bool = False):
+    def __init__(self, url: str, unreachable: bool = False, via: str = ""):
         msg = (f"robots.txt injoignable pour {url} : lecture suspendue par prudence" if unreachable
                else f"robots.txt interdit la lecture de {url}")
         super().__init__(msg)
         self.url = url
         self.unreachable = unreachable  # robots.txt could not be read (network / 5xx), RFC 9309 2.3.1.4
+        self.via = via                  # allowed page (already requested) that redirected to url
 
 
 class FetchError(Exception):
@@ -146,7 +147,10 @@ class Fetcher:
     def _crawl_delay(self, url: str) -> float:
         rp = self.robots_for(url)
         d = rp.crawl_delay(BOT_NAME) if rp else None
-        return min(float(d), MAX_CRAWL_DELAY) if d else self.min_delay
+        if d and float(d) > MAX_CRAWL_DELAY:
+            # waiting less than asked would break the site's rule: the host is not read
+            raise FetchError(url, None, f"Crawl-delay de {float(d):g} s demandé par robots.txt")
+        return float(d) if d else self.min_delay
 
     def _wait(self, host: str, delay: float) -> None:
         last = self._last.get(host)
@@ -206,8 +210,9 @@ class Fetcher:
         while r.is_redirect and hops < max_hops:
             nxt = requests.compat.urljoin(r.url, r.headers.get("location", ""))
             if check_robots and not self.allowed(nxt):
+                self.log.append({"url": r.url, "status": r.status_code})
                 self.log.append({"url": nxt, "status": "robots"})
-                raise RobotsDisallowed(nxt, unreachable=self.robots_unreachable(nxt))
+                raise RobotsDisallowed(nxt, unreachable=self.robots_unreachable(nxt), via=r.url)
             if r.status_code == 303 or (r.status_code in (301, 302) and method != "HEAD"):
                 method, data, json_body = "GET", None, None
             self._wait(self._host(nxt), self._crawl_delay(nxt))
