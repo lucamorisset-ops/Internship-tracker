@@ -733,7 +733,7 @@ async function onAdd(ev) {
   const name = $("a-company").value.trim();
   const raw = $("a-url").value.trim();
   if (!name) { setMsg(amsg, "Indique le nom de l'entreprise.", "err"); $("a-company").focus(); return; }
-  let link = null;
+  let href = null;
   if (raw) {
     let u = null;
     try { u = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : "https://" + raw); } catch { u = null; }
@@ -745,7 +745,7 @@ async function onAdd(ev) {
       setMsg(amsg, "Ce lien mène à un site d'annonces, pas au site officiel de l'entreprise. Indique sa page carrières officielle, ou laisse vide : le robot la cherchera.", "err");
       $("a-url").focus(); return;
     }
-    link = u.href;
+    href = u.href;
   }
   const types = checkedValues("a-type"), starts = checkedValues("a-start");
   if (!types.length) { setMsg(amsg, "Coche au moins un type de stage.", "err"); return; }
@@ -758,7 +758,7 @@ async function onAdd(ev) {
   const rank = state.sources.reduce((m, s) => Math.max(m, s.rank || 0), 0) + 1;
   const row = {
     id, company: name, rank, kind: "auto",
-    params: { url: link }, catalog_url: link,
+    params: { url: href }, catalog_url: href,
     criteria: { types, starts, keywords: $("a-kw").value.trim(), cities: $("a-city").value.trim() },
     status: "a_configurer", added_from_site: true,
   };
