@@ -131,6 +131,7 @@ section.panel{display:grid;gap:14px;min-width:0}
 .save-state:empty{display:none}
 .save-state.ok{color:var(--ok)} .save-state.err{color:var(--ko)}
 .statusbox{display:grid;gap:2px;justify-items:end}
+.statusbox .save-state{max-width:30ch;text-align:right}
 select{font:inherit;font-size:.85rem;padding:5px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);max-width:100%}
 .pill{display:inline-block;font-size:.72rem;font-weight:600;padding:2px 8px;border-radius:999px;letter-spacing:.02em;white-space:nowrap}
 .p-cible{background:var(--accent-soft);color:var(--accent)}
@@ -146,6 +147,7 @@ select{font:inherit;font-size:.85rem;padding:5px 8px;border-radius:6px;border:1p
 @media (max-width:560px){
   .offer{grid-template-columns:minmax(0,1fr)}
   .statusbox{justify-items:start}
+  .statusbox .save-state{text-align:left}
 }
 
 /* Barre d'outils des offres */

@@ -1,0 +1,11 @@
+[
+ {"additionalPlain":"Start date: March 2027.","categories":{"commitment":"Internship","department":"Investments","location":"London","team":"Equity Research","allLocations":["London"]},
+  "createdAt":1793347200000,"descriptionPlain":"Join our equity research team for a six-month internship.",
+  "id":"5f1d2c3b-aaaa-4bbb-8ccc-000000000001","lists":[{"text":"What you will do","content":"<li>Build financial models</li><li>Write investment notes</li>"}],
+  "text":"Equity Research Intern (6 months)","country":"GB","workplaceType":"onsite",
+  "hostedUrl":"https://jobs.lever.co/exampleam/5f1d2c3b-aaaa-4bbb-8ccc-000000000001",
+  "applyUrl":"https://jobs.lever.co/exampleam/5f1d2c3b-aaaa-4bbb-8ccc-000000000001/apply"},
+ {"categories":{"commitment":"Full-time","location":"Paris","team":"Operations"},"createdAt":1793952000000,
+  "descriptionPlain":"Operations analyst.","id":"5f1d2c3b-aaaa-4bbb-8ccc-000000000002","lists":[],
+  "text":"Operations Analyst","country":"FR","hostedUrl":"https://jobs.lever.co/exampleam/5f1d2c3b-aaaa-4bbb-8ccc-000000000002"}
+]

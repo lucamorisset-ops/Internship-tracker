@@ -141,6 +141,13 @@ const ui = {
 if (!["cible", "proche", "todo", "all"].includes(ui.filter)) ui.filter = "cible";
 if (!["rank", "recent", "old"].includes(ui.sort)) ui.sort = "rank";
 const drafts = new Map(); // id d'offre -> { value, error } : notes pas encore enregistrées
+const flashes = new Map(); // id d'offre -> { text, cls, at } : retour « Enregistré » qui survit à un rafraîchissement
+function flashFor(id) {
+  const f = flashes.get(id);
+  if (!f) return null;
+  if (Date.now() - f.at > 6000) { flashes.delete(id); return null; }
+  return f;
+}
 let api = null;           // couche données (Supabase ou démo)
 let sb = null;            // client Supabase
 let userId = null;
@@ -328,7 +335,8 @@ function offerCard(o, map) {
   (known ? STATUS : STATUS.concat([[status, status]])).forEach(([v, l]) => {
     const op = el("option", null, l); op.value = v; if (v === status) op.selected = true; sel.appendChild(op);
   });
-  const sst = el("span", "save-state");
+  const fl = flashFor(o.id);
+  const sst = el("span", "save-state" + (fl && fl.cls ? " " + fl.cls : ""), fl ? fl.text : "");
   sst.setAttribute("role", "status");
   sel.addEventListener("change", () => saveStatus(o.id, sel, sst));
   sbox.append(sel, sst);
@@ -363,19 +371,22 @@ async function saveStatus(id, sel, sst) {
   const o = offerById(id);
   const prev = (o && o.status) || "nouvelle";
   const next = sel.value;
-  sel.disabled = true;
+  // pas de disabled : un champ désactivé perd le focus et la carte disparaîtrait du filtre en cours
+  sel.setAttribute("aria-busy", "true");
   setMsg(sst, "Enregistrement…");
   try {
     await api.updateOffer(id, { status: next });
     if (o) o.status = next;
+    flashes.set(id, { text: "Enregistré", cls: "ok", at: Date.now() });
     setMsg(sst, "Enregistré", "ok");
     renderCounts();
     refresh();
   } catch (e) {
     sel.value = prev;
+    flashes.set(id, { text: "Non enregistré : " + explain(e) + ".", cls: "err", at: Date.now() });
     setMsg(sst, "Non enregistré : " + explain(e) + ".", "err");
   } finally {
-    sel.disabled = false;
+    sel.removeAttribute("aria-busy");
   }
 }
 async function saveNote(id, ta) {
@@ -618,7 +629,7 @@ function totalsText(t) {
   if (!t) return "";
   const bits = [];
   if (t.sources != null) bits.push(`${t.ok ?? 0}/${t.sources} sources lues`);
-  if (t.resiste) bits.push(`${t.resiste} résistent`);
+  if (t.resiste) bits.push(plural(t.resiste, "résiste", "résistent"));
   if (t.erreur) bits.push(`${t.erreur} en erreur`);
   bits.push(plural(t.new || 0, "nouvelle offre", "nouvelles offres"));
   if (t.closed) bits.push(plural(t.closed, "offre fermée", "offres fermées"));

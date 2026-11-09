@@ -1,0 +1,12 @@
+{"offset":0,"limit":100,"totalFound":2,"content":[
+ {"id":"744000154486600","name":"Stage 6 mois – Analyste Crédit","releasedDate":"2026-10-08T09:12:00.000Z",
+  "location":{"city":"Paris","country":"fr","fullLocation":"Paris, Île-de-France, France"},
+  "typeOfEmployment":{"id":"intern","label":"Internship"},
+  "company":{"identifier":"SycomoreAssetManagement","name":"Sycomore Asset Management"},
+  "ref":"https://api.smartrecruiters.com/v1/companies/SycomoreAssetManagement/postings/744000154486600"},
+ {"id":"744000154965945","name":"Stage Analyste ESG – 6 mois à compter de janvier 2027","releasedDate":"2026-10-15T08:00:00.000Z",
+  "location":{"city":"Paris","country":"fr","fullLocation":"Paris, Île-de-France, France"},
+  "typeOfEmployment":{"id":"intern","label":"Internship"},
+  "company":{"identifier":"SycomoreAssetManagement","name":"Sycomore Asset Management"},
+  "ref":"https://api.smartrecruiters.com/v1/companies/SycomoreAssetManagement/postings/744000154965945"}
+]}

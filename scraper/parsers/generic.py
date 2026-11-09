@@ -50,11 +50,10 @@ OFFER_HREF = re.compile(
     r"|stages?\b|stagiaire|intern(?!ation)|/opportunit|emplois?|annonce|requisition|recrutement/)")
 # offer words in the link text (accent-free, lower case)
 OFFER_TEXT = re.compile(
-    r"\b(stage|stages|stagiaire|intern|interns|internship|internships|alternan\w*|apprenti\w*|analyste?s?"
-    r"|analyst|assistant\w*|associate|trainee|graduate|off[- ]cycle|summer|cdi|cdd|v\.?i\.?e"
-    r"|h ?/ ?f|f ?/ ?h|m ?/ ?f|f ?/ ?m|m ?/ ?w ?/ ?d|gerant\w*|manager|specialist|specialiste"
-    r"|charge\w* d|consultant|developpeur|developer|engineer|ingenieur|controleur|juriste|auditeur"
-    r"|offre|job|poste|position|vacancy)\b")
+    r"\b(stage|stagiaire|intern|internship|alternance|alternant\w*|apprenti\w*|analyste?|analyst"
+    r"|assistant\w*|associate|trainee|graduate|off[- ]cycle|cdi|cdd|v\.?i\.?e"
+    r"|h ?/ ?f|f ?/ ?h|m ?/ ?f|f ?/ ?m|m ?/ ?w ?/ ?d|specialist|specialiste|charge\w* d\w*|consultant"
+    r"|developpeur|developer|engineer|ingenieur|controleur|juriste|auditeur|offre|job|poste|position|vacancy)\b")
 STRONG_TEXT = re.compile(r"\b(stage|stagiaire|internship|intern|off[- ]cycle|alternance|apprenti\w*"
                          r"|h ?/ ?f|f ?/ ?h|m ?/ ?f|f ?/ ?m|m ?/ ?w ?/ ?d)\b")
 # whole link texts that are navigation to a list, not an offer
@@ -194,6 +193,11 @@ def _title_for(a: Tag) -> tuple[str, str]:
                     full = clean_text(card.get_text(" "))
                     break
                 card = card.parent
+    card = a.find_parent(["li", "article", "tr"])
+    if card is not None:
+        ctx = clean_text(card.get_text(" "))
+        if len(full) < len(ctx) < 800:
+            full = ctx                         # card text: place, contract, date around the link
     return title[:300], full
 
 
@@ -317,19 +321,24 @@ class Parser(BaseParser):
                 description=clean_text(j.get("description") or "")[:4000],
                 extra={"jsonld": True},
             )
-            _merge_into(found, off, prefer_new_title=True)
+            _merge_into(found, off, from_jsonld=True)
         return list(found.values())
 
 
-def _merge_into(found: dict[str, Offer], off: Offer, prefer_new_title: bool = False) -> None:
-    """Dedupe by normalised URL; complete the first offer with what the second one knows."""
+def _merge_into(found: dict[str, Offer], off: Offer, from_jsonld: bool = False) -> None:
+    """Dedupe by normalised URL; complete the first offer with what the second one knows.
+
+    JSON-LD (structured data of the site) wins for the title and a longer description.
+    """
     k = off.url_key or off.id
     old = found.get(k)
     if old is None:
         found[k] = off
         return
-    if prefer_new_title and off.title:
+    if from_jsonld and off.title:
         old.title = off.title
+    if from_jsonld and len(off.description) > len(old.description):
+        old.description = off.description
     for f in ("location", "country", "contract", "published", "description"):
         if not getattr(old, f) and getattr(off, f):
             setattr(old, f, getattr(off, f))
