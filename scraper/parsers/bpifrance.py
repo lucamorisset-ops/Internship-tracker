@@ -23,6 +23,7 @@ params: {"urls": [list URL, ...], "internships_only": true}
 from __future__ import annotations
 
 import re
+from datetime import date
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup, Comment, Tag
@@ -191,6 +192,8 @@ def _describe(card: Tag, title: str, today: date) -> dict:
     for el, t in _leaves(card):
         if t == title or GENERIC_LINK.match(t) or el.find_parent(HEADINGS) is not None:
             continue
+        if el.name == "time" or el.find_parent("time") is not None:
+            continue
         m = LABELLED.match(t)
         if m:
             key = "location" if fold(m.group(1)) in ("lieu", "localisation", "ville", "site") else "contract"
@@ -201,9 +204,9 @@ def _describe(card: Tag, title: str, today: date) -> dict:
                 pm = PUBLISHED_TEXT.search(t)
                 rm = RELATIVE_AGE.search(t)
                 out["published"] = (parse_date(pm.group(2)) if pm else None) or parse_date(t) or \
-                    (parse_relative_age(rm.group(0), date_today()) if rm else None)
-                if not out["published"] and rm:
-                    out["published_label"] = t
+                    (parse_relative_age(rm.group(0), today) if rm else None)
+                if rm:
+                    out["published_label"] = rm.group(0)
             continue
         if not out["contract"] and (_has_class(el, CONTRACT_CLASS) or CONTRACT_WORD.match(t)):
             out["contract"] = t
@@ -214,24 +217,12 @@ def _describe(card: Tag, title: str, today: date) -> dict:
     return out
 
 
-_TODAY = None
-
-
-def date_today():
-    """Today's date of the current run (set by Parser.read; date.today() otherwise)."""
-    from datetime import date
-
-    return _TODAY or date.today()
-
-
 # ------------------------------------------------------------------ parser
 class Parser(BaseParser):
     name = "bpifrance"
     method = "navigateur"
 
     def read(self, source: dict) -> SourceResult:
-        global _TODAY
-        _TODAY = self.ctx.today
         res = self.result(source)
         p = self.params(source)
         urls = [u for u in (p.get("urls") or [p.get("url") or source["catalog_url"]]) if u]
@@ -248,8 +239,10 @@ class Parser(BaseParser):
                 except FetchError as e:
                     if e.status in (401, 403, 429) or "anti-robot" in (e.detail or ""):
                         raise                       # the runner reports "site qui résiste"
-                    (empty if "introuvable" in (e.detail or "") else failed).append(
-                        url if "introuvable" in (e.detail or "") else (url, e))
+                    if "introuvable" in (e.detail or ""):
+                        empty.append(url)           # no offer link appeared after loading
+                    else:
+                        failed.append((url, e))
                     continue
                 soup = BeautifulSoup(html, "lxml")
                 if is_maintenance(soup):
@@ -323,7 +316,7 @@ class Parser(BaseParser):
             url = urlunsplit((parts.scheme, parts.netloc, parts.path, f"id={_offer_id(href)}", ""))
             card = _card(anchors[0], ext_id)
             title = _title(anchors, card) or _title_from_url(href)
-            d = _describe(card, title) if card is not anchors[0] or card.find(True) else _describe(card, title)
+            d = _describe(card, title, self.ctx.today)
             out.append(self.offer(
                 source, ext_id=ext_id, title=title, url=url,
                 location=d["location"], contract=d["contract"], published=d["published"],
@@ -340,10 +333,8 @@ class Parser(BaseParser):
         """
         if not offer.url:
             return
-        html = None
         try:
-            html = self.ctx.fetcher.get(offer.url, retries=1).text
-            res.details_read.append(offer.url)
+            html: str | None = self.detail_get(offer.url, res, retries=1).text
         except FetchError:
             html = None
         if (html is None or not _shows_offer(html, offer)) and self.ctx.browser is not None:
