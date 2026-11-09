@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 import time
 import traceback
@@ -290,6 +291,25 @@ def _env(name: str) -> str:
     return (os.environ.get(name) or "").strip().strip('"').strip("'").strip()
 
 
+def _secret_key() -> str:
+    """The Supabase secret key, even if pasted with a label or on several lines."""
+    raw = _env("SUPABASE_SECRET_KEY")
+    m = re.search(r"sb_secret_[A-Za-z0-9_\-]+|eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+", raw)
+    if m:
+        if m.group(0) != raw:
+            print(f"Secret SUPABASE_SECRET_KEY : clé extraite d'un collage de {raw.count(chr(10)) + 1} ligne(s) "
+                  f"({len(m.group(0))} caractères gardés sur {len(raw)}).", file=sys.stderr)
+        return m.group(0)
+    if raw:
+        # never print the key itself: only its shape
+        print("La valeur du secret SUPABASE_SECRET_KEY ne ressemble pas à une clé Supabase "
+              f"({len(raw)} caractères, {raw.count(chr(10)) + 1} ligne(s), "
+              f"commence par « sb_secret_ » : {'oui' if raw.startswith('sb_secret_') else 'non'}). "
+              "Recopie la Secret key avec l'icône de copie de Supabase (Project Settings > API Keys).",
+              file=sys.stderr)
+    return raw
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m scraper")
     ap.add_argument("--only", help="ids de sources séparés par des virgules")
@@ -308,13 +328,21 @@ def main(argv: list[str] | None = None) -> int:
         store = LocalStore(args.local)
     else:
         # secrets pasted in GitHub often carry a trailing newline or spaces
-        url, key = _env("SUPABASE_URL"), _env("SUPABASE_SECRET_KEY")
+        url, key = _env("SUPABASE_URL"), _secret_key()
         if not url or not key:
             print("SUPABASE_URL et SUPABASE_SECRET_KEY sont nécessaires (ou --local).", file=sys.stderr)
             return 2
         store = SupabaseStore(url, key)
 
-    pending = store.pending_requests()
+    try:
+        pending = store.pending_requests()
+    except RuntimeError as e:
+        if " 401" in str(e) or " 403" in str(e):
+            print("Supabase refuse la clé (401/403) : le secret SUPABASE_SECRET_KEY n'est pas la Secret key "
+                  "complète du projet. Recopie-la avec l'icône de copie (Project Settings > API Keys) "
+                  "et remplace le secret dans GitHub.", file=sys.stderr)
+            return 2
+        raise
     if args.has_requests:
         out = os.environ.get("GITHUB_OUTPUT")
         line = f"pending={'true' if pending else 'false'}\n"
