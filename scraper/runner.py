@@ -21,7 +21,7 @@ from typing import Any
 
 from .browser import LazyBrowser
 from .http import MAX_CRAWL_DELAY, Fetcher, FetchError, RobotsDisallowed, env_capture_dir
-from .matching import classify
+from .matching import MATCHING_VERSION, classify
 from .models import Offer, SourceResult, url_key
 from .notify import Notifier
 from .parsers import Context, get_parser
@@ -119,6 +119,7 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
     sources = store.load_sources()
     if only:
         sources = [s for s in sources if s["id"] in only]
+    reclassed = reclassify(store, sources, today) if not only else []
     existing = store.load_offers()
     by_key: dict[tuple[str, str], dict] = {}
     for o in existing:
@@ -241,7 +242,7 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
         if browser:
             browser.close()
 
-    _notify(notifier, new_hits, status_changes, sources)
+    _notify(notifier, new_hits, status_changes, sources, reclassed)
     summary = {
         "started_at": started,
         "finished_at": now_iso(),
@@ -256,9 +257,53 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
     return summary
 
 
+ROBOT_REASON = re.compile(r"^(métier|contrat|pas un stage|lieu|démarrage)")
+
+
+def reclassify(store, sources: list[dict], today: date) -> list[Offer]:
+    """When the sorting rules changed (MATCHING_VERSION), sort the open offers again.
+
+    Only offers sorted by the robot are touched (offers imported from the old tracker
+    keep the explanation written for them). Returns those that became cible / proche.
+    """
+    try:
+        if store.get_meta("matching_version") == MATCHING_VERSION:
+            return []
+        rows = store.load_open_offers_full()
+    except Exception as e:  # noqa: BLE001 - never block a pass for this
+        log.warning("re-tri impossible : %s", e)
+        return []
+    crit = {s["id"]: s.get("criteria") for s in sources}
+    params = {s["id"]: s.get("params") or {} for s in sources}
+    improved: list[Offer] = []
+    changed = 0
+    for r in rows:
+        if r.get("manual") or not ROBOT_REASON.match(r.get("reasons") or ""):
+            continue
+        o = Offer(source_id=r["source_id"], ext_id=r["id"].split(":", 1)[-1], title=r.get("title") or "",
+                  url="", location=r.get("location") or "", country=r.get("country") or "",
+                  contract=r.get("contract") or "", description=r.get("description") or "")
+        classify(o, crit.get(r["source_id"]), today,
+                 assume_internship=bool(params.get(r["source_id"], {}).get("internships_only")))
+        if (o.relevance, o.start_label, o.reasons) != (r.get("relevance"), r.get("start_label"), r.get("reasons")):
+            store.update_offer(r["id"], {"relevance": o.relevance, "start_label": o.start_label, "reasons": o.reasons})
+            changed += 1
+            rank = {"cible": 0, "proche": 1, "exclue": 2}
+            if rank.get(o.relevance, 2) < rank.get(r.get("relevance"), 2):
+                improved.append(o)
+    store.set_meta("matching_version", MATCHING_VERSION)
+    log.info("Re-tri des offres ouvertes (règles %s) : %d modifiées, %d remontées.",
+             MATCHING_VERSION, changed, len(improved))
+    return improved
+
+
 def _notify(notifier: Notifier, hits: list[Offer], changes: list[tuple[dict, SourceResult]],
-            sources: list[dict]) -> None:
+            sources: list[dict], reclassed: list[Offer] | None = None) -> None:
     names = {s["id"]: s["company"] for s in sources}
+    if reclassed:
+        notifier.send(f"{len(reclassed)} offre(s) remontée(s) après mise à jour des critères",
+                      "\n".join(f"• {names.get(o.source_id, o.source_id)} : {o.title} ({o.relevance})"
+                                for o in reclassed[:15]), priority=3, tags=["arrows_counterclockwise"])
     cible = [o for o in hits if o.relevance == "cible"]
     proche = [o for o in hits if o.relevance == "proche"]
     if len(cible) <= 4:

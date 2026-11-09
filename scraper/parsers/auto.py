@@ -287,14 +287,11 @@ class Parser(BaseParser):
                 lower.append(s.lower())
 
         for slug in slugs:
-            data = self._probe(f"https://api.smartrecruiters.com/v1/companies/{quote(slug)}/postings?limit=1", res)
-            if isinstance(data, dict) and _int(data.get("totalFound")) > 0:
-                first = (data.get("content") or [{}])[0] or {}
-                comp = first.get("company") or {}
-                if same_company(company, comp.get("name")):
-                    ident = comp.get("identifier") or slug
-                    return self._found(source, "smartrecruiters", {"company": ident}, res,
-                                       f"https://careers.smartrecruiters.com/{ident}")
+            # the SmartRecruiters API is forbidden by its robots.txt: try the public careers page
+            title = self._sr_careers_title(slug, res)
+            if title and same_company(company, re.sub(r"^\s*careers at\s+", "", title, flags=re.I)):
+                return self._found(source, "smartrecruiters", {"company": slug}, res,
+                                   f"https://careers.smartrecruiters.com/{slug}")
         for slug in lower:
             data = self._probe(_gh_api(slug), res)
             jobs = data.get("jobs") if isinstance(data, dict) else None
@@ -320,6 +317,18 @@ class Parser(BaseParser):
         if res.source_updates and not source.get("catalog_url"):
             res.source_updates["catalog_url"] = catalog
         return res
+
+    def _sr_careers_title(self, slug: str, res: SourceResult) -> str | None:
+        """<title> of careers.smartrecruiters.com/{slug} when that page exists."""
+        url = f"https://careers.smartrecruiters.com/{quote(slug)}"
+        try:
+            r = self.get(url, res, accept_status=(200, 404), retries=0)
+        except (FetchError, RobotsDisallowed):
+            return None
+        if r.status != 200 or "jobs.smartrecruiters.com/" not in r.text:
+            return None
+        m = re.search(r"<title[^>]*>(.*?)</title>", r.text, re.S | re.I)
+        return m.group(1).strip() if m else None
 
     def _probe(self, url: str, res: SourceResult):
         """JSON of a guessed board, or None (404, robots, error, not JSON)."""

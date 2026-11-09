@@ -55,11 +55,9 @@ ROUTES = {
     r"creditmutuel\.fr/fr/nos_offres\.html\?socs=": "creditmutuel.html",
     r"comgest\.com/en/about-us/our-people/careers/internship-offers$": "comgest_internships.html",
     r"comgest\.com/en/about-us/our-people/careers/job-offers$": "comgest_jobs_empty.html",
-    r"api\.smartrecruiters\.com/v1/companies/SycomoreAssetManagement/postings\?limit=100&offset=0$":
-        "smartrecruiters_sycomore.json",
-    r"api\.smartrecruiters\.com/v1/companies/SycomoreAssetManagement/postings/744000154486600$":
-        "smartrecruiters_posting.json",
-    r"api\.smartrecruiters\.com/v1/companies/[^/]+/postings\?limit=1$": (200, '{"totalFound":0,"content":[]}'),
+    r"careers\.smartrecruiters\.com/SycomoreAssetManagement$": "smartrecruiters_careers.html",
+    r"jobs\.smartrecruiters\.com/SycomoreAssetManagement/\d+": "smartrecruiters_job.html",
+    r"careers\.smartrecruiters\.com/[^/]+$": (404, "not found"),
     r"evht\.fa\.ocs\.oraclecloud\.eu/hcmRestApi/resources/latest/recruitingCEJobRequisitions\?": "oracle_edr.json",
     r"icbpjb\.fa\.ocs\.oraclecloud\.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions\?": "oracle_lazard.json",
     r"jpmc\.fa\.oraclecloud\.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails\?.*%22210802419%22":
@@ -299,7 +297,7 @@ def test_whole_seed_two_passes(tmp_path, monkeypatch):
             if k in STATUS_AFTER_FIRST_PASS} == STATUS_AFTER_FIRST_PASS
     assert notif2.sent == []                                              # nothing new, no status change
     assert [o["id"] for o in store.db["offers"] if o["closed"]] == ["amundi:115000", "gs:184029", "gs:170901"]
-    assert {r["source"]: r for r in s2["sources"]}["sycomore-site"]["method"] == "api"   # dedicated reader now
+    assert {r["source"]: r for r in s2["sources"]}["sycomore-site"]["method"] == "html"  # dedicated reader now
 
 
 # ---------------------------------------------------------------------- generic titles

@@ -157,3 +157,30 @@ def test_crawl_delay_too_long_is_explained():
     assert status == "resiste"
     assert reason.startswith("Le fichier robots.txt de slow.test demande d'attendre plus de 60 secondes")
     assert "alerte" in fix
+
+
+def test_reclassify_when_rules_change(tmp_path, monkeypatch):
+    """Offers wrongly excluded by older rules are re-sorted once, and Luca is told."""
+    _install(monkeypatch)
+    store = _store(tmp_path)
+    store.db["offers"] = [
+        {"id": "acme:9", "source_id": "acme", "title": "Stage - Assistant gestion multi-asset H/F", "url": "https://x.test/o/9",
+         "url_key": "https://x.test/o/9", "location": "Paris 15 éme", "contract": "Stage", "closed": False, "manual": False,
+         "description": "Mis à jour le 01/12/2024", "relevance": "exclue", "reasons": "démarrage Décembre 2024",
+         "start_label": "Décembre 2024"},
+        {"id": "acme:old", "source_id": "acme", "title": "Stage Juriste", "url": "https://x.test/o/old",
+         "url_key": "https://x.test/o/old", "closed": False, "manual": False, "relevance": "cible",
+         "reasons": "Note écrite à la main pour l'ancien tracker"},
+    ]
+    store.save()
+    STATE["offers"] = [("9", "Stage - Assistant gestion multi-asset H/F")]
+    notif = Notifier(None, dry_run=True)
+    run(store, notif, use_browser=False, fetcher=FakeFetcher({}), today=date(2026, 11, 9))
+    offers = {o["id"]: o for o in store.db["offers"]}
+    assert offers["acme:9"]["relevance"] == "cible" and offers["acme:9"]["start_label"] == "Non précisé"
+    assert offers["acme:old"]["relevance"] == "cible"          # hand-written explanation: untouched
+    assert any("remontée" in m["title"] for m in notif.sent)
+    # second pass: rules unchanged, nothing re-sorted, no new message
+    notif2 = Notifier(None, dry_run=True)
+    run(store, notif2, use_browser=False, fetcher=FakeFetcher({}), today=date(2026, 11, 9))
+    assert not any("remontée" in m["title"] for m in notif2.sent)

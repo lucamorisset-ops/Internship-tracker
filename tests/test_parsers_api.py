@@ -188,63 +188,34 @@ def test_oracle_classification_smoke(make_ctx):
 
 
 # --------------------------------------------------------------------------- smartrecruiters
-SR_LIST = r"api\.smartrecruiters\.com/v1/companies/SycomoreAssetManagement/postings\?"
+# The Posting API is forbidden by api.smartrecruiters.com/robots.txt: the public careers page is read.
+SR_PAGE = r"careers\.smartrecruiters\.com/SycomoreAssetManagement$"
 
 
-def test_smartrecruiters_list(make_ctx):
-    ctx = make_ctx({SR_LIST: "smartrecruiters_sycomore.json"})
+def test_smartrecruiters_careers_page(make_ctx):
+    ctx = make_ctx({SR_PAGE: "smartrecruiters_careers.html"})
     res = _parser(ctx, SYCOMORE).read(SYCOMORE)
 
-    assert res.ok and res.complete and res.method == "api"
-    assert ctx.fetcher.calls == [
-        "https://api.smartrecruiters.com/v1/companies/SycomoreAssetManagement/postings?limit=100&offset=0"]
-    assert [o.ext_id for o in res.offers] == ["744000154970480", "744000154965945", "744000154486600",
-                                              "744000150123456"]
+    assert res.ok and res.complete and res.method == "html"
+    assert ctx.fetcher.calls == ["https://careers.smartrecruiters.com/SycomoreAssetManagement"]
+    assert [o.ext_id for o in res.offers] == ["744000156721659", "744000154970480", "744000154965945",
+                                              "744000154486600"]
     o = _by_id(res)["744000154486600"]
     assert o.title == "Stage 6 mois – Analyste Crédit"
     assert o.url == ("https://jobs.smartrecruiters.com/SycomoreAssetManagement/"
                      "744000154486600-stage-6-mois-analyste-credit")
-    assert o.published == date(2026, 10, 8)
-    assert o.location == "Paris, Île-de-France, France" and o.country == "FR"
-    assert o.contract == "Internship"
+    assert o.location == "Paris, France" and o.country == "FR" and o.contract == "Full-time"
     q = _by_id(res)["744000154970480"]
-    assert q.url.endswith("/744000154970480-stage-assistant-de-gestion-quantitative-finance-data-ia-6-mois-s1-2027")
-    assert _by_id(res)["744000154965945"].location == "Paris"     # no fullLocation -> city
-    # the permanent middle-office job is read, then excluded by matching
-    assert classify(_by_id(res)["744000150123456"], today=date(2026, 11, 8)).relevance == "exclue"
+    assert q.title == "Stage Assistant de gestion (Quantitative, Finance, Data & IA) – 6 mois – S1 2027"
+    assert classify(q, today=date(2026, 11, 8)).relevance == "cible"
+    assert classify(_by_id(res)["744000156721659"], today=date(2026, 11, 8)).relevance == "exclue"
 
 
-def _sr_page(offset: int, n: int, total: int) -> tuple[int, str]:
-    content = [{"id": str(9000 + offset + i), "name": f"Stage {offset + i}", "releasedDate": "2026-10-01T00:00:00.000Z",
-                "location": {"city": "Paris", "country": "fr"}} for i in range(n)]
-    return 200, json.dumps({"offset": offset, "limit": 100, "totalFound": total, "content": content})
-
-
-def test_smartrecruiters_paging(make_ctx):
-    ctx = make_ctx({r"offset=0$": _sr_page(0, 100, 150), r"offset=100$": _sr_page(100, 50, 150)})
-    res = _parser(ctx, SYCOMORE).read(SYCOMORE)
-    assert len(res.offers) == 150 and res.complete
-    assert [c.rsplit("=", 1)[1] for c in ctx.fetcher.calls] == ["0", "100"]
-
-
-def test_smartrecruiters_enrich(make_ctx):
-    ctx = make_ctx({r"/postings/744000154486600$": "smartrecruiters_posting.json",
-                    SR_LIST: "smartrecruiters_sycomore.json"})
-    parser = _parser(ctx, SYCOMORE)
-    res = parser.read(SYCOMORE)
-    o = _by_id(res)["744000154486600"]
-    parser.enrich(o, res)
-
-    ref = "https://api.smartrecruiters.com/v1/companies/SycomoreAssetManagement/postings/744000154486600"
-    assert res.details_read == [ref] and ctx.fetcher.calls[-1] == ref
-    assert o.description.startswith("Au sein de l'équipe crédit, vous participerez à l’analyse fondamentale")
-    assert "Master 1 ou 2 en finance" in o.description and "Stage de 6 mois basé à Paris." in o.description
-    assert "société de gestion indépendante" not in o.description       # companyDescription not used
-    assert o.url == ("https://jobs.smartrecruiters.com/SycomoreAssetManagement/"
-                     "744000154486600-stage-6-mois-analyste-credit-h-f-")
-    assert o.ext_id == "744000154486600"
-    classify(o, today=date(2026, 11, 8))
-    assert o.start_label == "Janvier 2027"
+def test_smartrecruiters_api_is_never_called(make_ctx):
+    robots = {"https://api.smartrecruiters.com": "User-agent: LinkedInBot\nAllow: /v1/companies/\nUser-agent: *\nDisallow: /"}
+    ctx = make_ctx({SR_PAGE: "smartrecruiters_careers.html"}, robots=robots)
+    _parser(ctx, SYCOMORE).read(SYCOMORE)
+    assert not any("api.smartrecruiters.com" in c for c in ctx.fetcher.calls)
 
 
 # --------------------------------------------------------------------------- wp_job

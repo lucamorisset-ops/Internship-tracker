@@ -209,7 +209,7 @@ def test_is_intermediary():
 
 
 # --------------------------------------------------------------------------- auto: detection
-SR_API = r"api\.smartrecruiters\.com/v1/companies/SycomoreAssetManagement/postings\?limit=100"
+SR_API = r"careers\.smartrecruiters\.com/SycomoreAssetManagement$"   # public careers page (the API is robots-forbidden)
 
 
 def test_detect_ats_patterns():
@@ -268,26 +268,27 @@ def _auto(catalog_url=None, params=None, company="Sycomore AM"):
 
 
 def test_auto_detects_smartrecruiters_from_url_and_delegates(make_ctx):
-    ctx = make_ctx({SR_API: "auto_smartrecruiters.json"})
+    ctx = make_ctx({SR_API: "smartrecruiters_careers.html"})
     p = get_parser("auto", ctx)
     res = p.read(_auto("https://careers.smartrecruiters.com/SycomoreAssetManagement"))
     assert res.source_updates == {"kind": "smartrecruiters", "params": {"company": "SycomoreAssetManagement"}}
     assert res.ok and res.status == "ok"
-    assert {o.ext_id for o in res.offers} == {"744000154486600", "744000154965945"}
+    assert {"744000154486600", "744000154965945"} <= {o.ext_id for o in res.offers}
     assert all(o.source_id == "sycomore-auto" for o in res.offers)
-    assert any("api.smartrecruiters.com" in u for u in res.urls_read)
+    assert any("careers.smartrecruiters.com" in u for u in res.urls_read)
+    assert not any("api.smartrecruiters.com" in c for c in ctx.fetcher.calls)
     assert "SmartRecruiters" in res.reason and res.method.startswith("détection puis")
     assert type(p._delegate).__module__.endswith("smartrecruiters")      # enrich goes to the real reader
 
 
 def test_auto_detects_smartrecruiters_from_the_careers_page(make_ctx):
     url = "https://www.sycomore-am.com/fr/carrieres"
-    ctx = make_ctx({r"sycomore-am\.com/fr/carrieres$": "auto_sycomore_careers.html", SR_API: "auto_smartrecruiters.json"})
+    ctx = make_ctx({r"sycomore-am\.com/fr/carrieres$": "auto_sycomore_careers.html", SR_API: "smartrecruiters_careers.html"})
     res = get_parser("auto", ctx).read(_auto(url))
     assert res.urls_read[0] == url
     assert res.source_updates["kind"] == "smartrecruiters"
     assert res.source_updates["params"] == {"company": "SycomoreAssetManagement"}
-    assert len(res.offers) == 2
+    assert len(res.offers) == 4
 
 
 def test_auto_refuses_jobteaser(make_ctx):
@@ -301,7 +302,7 @@ def test_auto_refuses_jobteaser(make_ctx):
 
 def test_auto_name_guess_finds_greenhouse_board(make_ctx):
     ctx = make_ctx({
-        r"api\.smartrecruiters\.com/v1/companies/": (200, '{"offset":0,"limit":1,"totalFound":0,"content":[]}'),
+        r"careers\.smartrecruiters\.com/": (404, "not found"),
         r"boards-api\.greenhouse\.io/v1/boards/sycomore-am/jobs\?content=true$": "greenhouse_jobs.json",
     })
     res = get_parser("auto", ctx).read(_auto())
@@ -321,8 +322,18 @@ def test_auto_name_guess_finds_greenhouse_board(make_ctx):
     assert not any(c.endswith("/boards/sycomore/jobs?content=true") for c in ctx.fetcher.calls)
 
 
+def test_auto_name_guess_finds_smartrecruiters_careers_page(make_ctx):
+    ctx = make_ctx({r"careers\.smartrecruiters\.com/SycomoreAssetManagement$": "smartrecruiters_careers.html",
+                    r"careers\.smartrecruiters\.com/": (404, "not found")})
+    res = get_parser("auto", ctx).read(_auto(company="Sycomore Asset Management"))
+    assert res.source_updates["kind"] == "smartrecruiters"
+    assert res.source_updates["params"] == {"company": "SycomoreAssetManagement"}
+    assert len(res.offers) == 4
+    assert not any("api.smartrecruiters.com" in c for c in ctx.fetcher.calls)
+
+
 def test_auto_name_guess_nothing_found(make_ctx):
-    ctx = make_ctx({r"api\.smartrecruiters\.com/v1/companies/": (200, '{"totalFound":0,"content":[]}')})
+    ctx = make_ctx({r"careers\.smartrecruiters\.com/": (404, "not found")})
     res = get_parser("auto", ctx).read(_auto(company="Exemple Gestion Privée"))
     assert res.ok and res.status == "a_configurer" and not res.complete
     assert res.reason == "Je n'ai pas trouvé de catalogue officiel à partir du nom seul."

@@ -20,6 +20,9 @@ from datetime import date
 
 from .models import Offer, fold
 
+# Bump when the rules change: the robot then re-sorts the offers already in the database.
+MATCHING_VERSION = "2026-11-09.2"
+
 DEFAULT_CRITERIA = {
     "types": ["Gestion d'actifs", "Equity research", "Investment specialist", "Investment analyst"],
     "starts": ["Janvier 2027", "Mars 2027"],
@@ -86,12 +89,12 @@ EXCLUDED_METIERS = [
     (r"\bit\b|informatique|developpeur|developer|software|engineer|ingenieur|devops|cyber|"
      r"cloud|machine learning|\bai\b research|data engineer", "informatique"),
     (r"middle[- ]office|back[- ]office|\bkyc\b|\baml\b|\blcb|lutte anti|onboarding", "middle / back office"),
-    (r"controle|controleur|controller|controlling|audit|inspection", "contrôle / audit"),
+    (r"controle|controleur|controller|controlling|\bcontrol\b|audit|inspection", "contrôle / audit"),
     (r"risques? de marche|risk manag|gestion des risques|market risk|credit risk|"
      r"model risk|\brisques?\b", "risques"),
     (r"comptab|accounting|fiscal|\btax\b|tresorerie|treasury", "comptabilité / fiscalité"),
     (r"m&a|m & a|mergers|fusions[- ]acquisitions|\bibd\b|corporate finance|"
-     r"financement|leveraged finance|\becm\b|\bdcm\b", "banque d'affaires / M&A"),
+     r"financement|leveraged finance|\becm\b|\bdcm\b|(debt|equity) capital markets?", "banque d'affaires / M&A"),
     (r"venture capital|\bvc\b", "venture capital"),
     (r"immobili|real estate|\breit\b", "immobilier"),
     (r"secretariat|assistant\(?e?\)? de direction|office manag|achats|procurement|"
@@ -161,8 +164,13 @@ def _year(y: str | None) -> int | None:
     return n + 2000 if n < 100 else n
 
 
-def detect_start(text: str, today: date | None = None) -> Start | None:
-    """Find the internship start month in free text (title + description)."""
+def detect_start(text: str, today: date | None = None, require_context: bool = False) -> Start | None:
+    """Find the internship start month in free text.
+
+    require_context=True (used for long descriptions): only dates right after a start word
+    ("début", "à partir de", "starting"...) count, so that publication or update dates
+    printed on an offer page are never taken for the start date.
+    """
     today = today or date.today()
     t = fold(text)
     candidates: list[tuple[int, int, int | None, bool]] = []  # (score, month, year, explicit)
@@ -171,7 +179,10 @@ def detect_start(text: str, today: date | None = None) -> Start | None:
         ctx_before = t[max(0, pos - 45):pos]
         if re.search(NOT_START_WORDS, ctx_before):
             return
-        score = base + (10 if re.search(START_WORDS, ctx_before) else 0)
+        has_start_word = bool(re.search(START_WORDS, ctx_before))
+        if require_context and not has_start_word:
+            return
+        score = base + (10 if has_start_word else 0)
         candidates.append((score, month, year, year is not None))
 
     # "janvier 2027", "Jan 2027", "janvier", "mars 27"
@@ -185,7 +196,7 @@ def detect_start(text: str, today: date | None = None) -> Start | None:
             continue
         add(m.start(), MONTHS[word], _year(y), 5 if y else 2)
     # numeric month/year: 01/2027, 1-2027, 03.2027
-    for m in re.finditer(r"\b(0?[1-9]|1[0-2])[/.\-](20\d{2})\b", t):
+    for m in re.finditer(r"(?<![\d/.\-])(0?[1-9]|1[0-2])[/.\-](20\d{2})\b", t):   # not the end of dd/mm/yyyy
         add(m.start(), int(m.group(1)), int(m.group(2)), 4)
     # full date dd/mm/yyyy only next to a start word
     for m in re.finditer(r"\b([0-3]?\d)[/.\-](0?[1-9]|1[0-2])[/.\-](20\d{2})\b", t):
@@ -229,6 +240,15 @@ def _months(ym: tuple[int, int]) -> int:
 
 
 # ---------------------------------------------------------------- places
+_COUNTRY_WORDS = r"france|united kingdom|royaume[- ]uni|england|angleterre|\buk\b|\bgb\b|\bfr\b|europe|emea"
+
+
+def _only_country(location: str) -> bool:
+    """True when the location names a country but no city ("France", "United Kingdom")."""
+    rest = re.sub(_COUNTRY_WORDS, " ", fold(location or ""))
+    return not re.search(r"[a-z]{3,}", rest)
+
+
 def place_rank(offer: Offer, cities: list[str]) -> tuple[int, str]:
     """(rank, label): 1 Paris/IDF, 2 London, 3 France/UK without a city, 9 elsewhere, 5 unknown."""
     loc = fold(" ".join(x for x in (offer.location, offer.country) if x))
@@ -240,12 +260,12 @@ def place_rank(offer: Offer, cities: list[str]) -> tuple[int, str]:
         if c in ("paris", "ile-de-france", "ile de france", "idf"):
             if re.search(PARIS_TERMS, loc):
                 ranks.append((i, "Paris"))
-            elif re.search(FRANCE_TERMS, loc) or fold(offer.country) == "fr":
+            elif _only_country(offer.location) and (re.search(r"france", loc) or fold(offer.country) == "fr"):
                 ranks.append((i + 2, "France"))
         elif c in ("londres", "london"):
             if re.search(LONDON_TERMS, loc):
                 ranks.append((i, "Londres"))
-            elif re.search(UK_TERMS, loc):
+            elif _only_country(offer.location) and (re.search(UK_TERMS, loc) or fold(offer.country) == "gb"):
                 ranks.append((i + 2, "Royaume-Uni"))
         elif c and c in loc:
             ranks.append((i, c.title()))
@@ -323,7 +343,8 @@ def classify(offer: Offer, criteria: dict | None = None, today: date | None = No
     offer.extra["place_rank"] = rank
 
     # 4. start
-    st = detect_start(offer.text(), today)
+    st = detect_start(f"{offer.title} \n{offer.contract}", today) or (
+        detect_start(offer.description, today, require_context=True) if offer.description else None)
     wanted = [x for x in (parse_start_label(s) for s in c.get("starts") or []) if x]
     near_start = False
     if st and st.year and st.month:

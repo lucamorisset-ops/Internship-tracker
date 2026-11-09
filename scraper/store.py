@@ -83,6 +83,15 @@ class SupabaseStore:
         return self._select_all("offers", {
             "select": "id,source_id,url,url_key,closed,manual,relevance,title"})
 
+    def load_open_offers_full(self) -> list[dict]:
+        return self._select_all("offers", {
+            "select": "id,source_id,title,location,country,contract,description,relevance,start_label,reasons,manual",
+            "closed": "eq.false"})
+
+    def get_meta(self, key: str) -> Any:
+        rows = self._select_all("meta", {"select": "value", "key": f"eq.{key}"})
+        return rows[0]["value"] if rows else None
+
     def pending_requests(self) -> list[dict]:
         return self._select_all("run_requests", {"select": "*", "done_at": "is.null",
                                                  "order": "requested_at.asc"})
@@ -148,6 +157,12 @@ class LocalStore:
 
     def pending_requests(self) -> list[dict]:
         return [r for r in self.db["run_requests"] if not r.get("done_at")]
+
+    def load_open_offers_full(self) -> list[dict]:
+        return [dict(o) for o in self.db["offers"] if not o.get("closed")]
+
+    def get_meta(self, key: str) -> Any:
+        return self.db["meta"].get(key)
 
     def _offer(self, oid: str) -> dict | None:
         return next((o for o in self.db["offers"] if o["id"] == oid), None)
