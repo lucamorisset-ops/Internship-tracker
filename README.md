@@ -40,6 +40,20 @@ types de stage, démarrage, villes, mots-clés. Le robot passe dans les 15 minut
 portails courants (SmartRecruiters, Oracle, Talentsoft, Workday, Greenhouse, Lever, Recruitee…), sinon
 il lit la page de façon générique et le dit dans l'onglet Sites qui résistent.
 
+## Lien à lire
+
+Onglet **Sources et catalogues**, champ **Lien à lire** de chaque entreprise : colle l'adresse exacte
+d'une page d'offres (une liste filtrée, une autre page du site officiel…). Le robot la lit à chaque passage
+en plus du catalogue habituel (portail reconnu ou lecture générique) et ajoute les offres qu'il y trouve.
+Les règles de lecture restent les mêmes : un site qui interdit les robots ou refuse la lecture continue de résister.
+
+## Inventaire complet
+
+Le robot enregistre **toutes** les offres lues, même hors critères. Un stage écarté pour le métier,
+le lieu ou la date apparaît comme **Hors critères** ; s'il est repéré après la date `inventory_since`
+(table `meta`), il compte aussi dans **Non traitées**. CDI, alternance et VIE restent **Exclus**.
+Les notifications ne concernent que les offres ciblées et à vérifier.
+
 ## Installation (une seule fois)
 
 1. **Supabase** : SQL Editor → coller le fichier `setup.sql` fourni (schéma + entreprises + offres déjà

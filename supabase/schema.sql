@@ -28,6 +28,7 @@ create table if not exists public.sources (
   last_count    int,
   last_urls     jsonb,                            -- URL réellement lues au dernier passage
   page_hash     text,
+  priority_url  text,                             -- « Lien à lire » collé par toi, lu en plus du catalogue
   added_from_site boolean not null default false,
   created_at    timestamptz not null default now()
 );
@@ -82,6 +83,9 @@ create table if not exists public.meta (
   key   text primary key,
   value jsonb
 );
+
+-- colonnes ajoutées après la création (le fichier reste rejouable)
+alter table public.sources add column if not exists priority_url text;
 
 -- ---------------------------------------------------------------- accès
 -- Seules les adresses de allowed_users voient et modifient les données.
@@ -142,7 +146,7 @@ revoke insert, update, delete on public.sources from authenticated;
 grant select, delete on public.sources to authenticated;
 grant insert (id, company, rank, kind, params, catalog_url, read_urls, filters, criteria, status,
               note, enabled, added_from_site) on public.sources to authenticated;
-grant update (company, rank, catalog_url, criteria, note, enabled, status) on public.sources to authenticated;
+grant update (company, rank, catalog_url, criteria, note, enabled, status, priority_url) on public.sources to authenticated;
 revoke insert, update, delete on public.runs, public.meta from authenticated;
 grant select on public.runs, public.meta to authenticated;
 revoke insert, update, delete on public.run_requests from authenticated;

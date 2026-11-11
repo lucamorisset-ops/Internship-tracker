@@ -93,6 +93,32 @@ def read_source(parser, source: dict) -> SourceResult:
     return res
 
 
+def read_priority(ctx: Context, src: dict, res: SourceResult) -> None:
+    """Read the page Luca pasted in « Lien à lire » (sources.priority_url) and merge its offers.
+
+    The page is read like a company added from the site (kind "auto": known portal
+    recognised from the URL or the page, otherwise generic reading). Offers whose
+    URL is already in the main read are dropped. Offers found on this page count as
+    seen, so they are not closed while the page still lists them.
+    """
+    url = (src.get("priority_url") or "").strip()
+    if not url:
+        return
+    copy = {**src, "kind": "auto", "params": {"url": url}, "catalog_url": url, "read_urls": [url]}
+    try:
+        extra = read_source(get_parser("auto", ctx), copy)
+    except Exception as e:  # noqa: BLE001 - the main read must survive
+        extra = SourceResult(src["id"], ok=False, error=f"{type(e).__name__}: {e}")
+    res.urls_read = list(dict.fromkeys(res.urls_read + extra.urls_read))
+    known = {o.url_key for o in res.offers if o.url_key}
+    added = [o for o in extra.offers if not (o.url_key and o.url_key in known)]
+    res.offers += added
+    if not extra.ok:
+        note = f"Le lien à lire ({url}) n'a pas pu être lu : {extra.reason or extra.error}"
+        res.reason = (res.reason + " " if res.reason else "") + note
+    log.info("  lien à lire : %d offre(s) en plus%s", len(added), "" if extra.ok else " (échec)")
+
+
 def _dedupe(offers: list[Offer]) -> list[Offer]:
     """Same offer read twice (two lists, two searches) -> keep one, by id.
 
@@ -145,6 +171,8 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
                 parser = None
             else:
                 res = read_source(parser, src)
+            if src.get("priority_url"):
+                read_priority(ctx, src, res)
             res.offers = _dedupe(res.offers)
             criteria = src.get("criteria") or None
             assume_intern = bool((src.get("params") or {}).get("internships_only"))

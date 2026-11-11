@@ -184,3 +184,48 @@ def test_reclassify_when_rules_change(tmp_path, monkeypatch):
     notif2 = Notifier(None, dry_run=True)
     run(store, notif2, use_browser=False, fetcher=FakeFetcher({}), today=date(2026, 11, 9))
     assert not any("remontée" in m["title"] for m in notif2.sent)
+
+
+def test_priority_url_adds_offers_without_closing(tmp_path, monkeypatch):
+    """« Lien à lire » : the pasted page is read too; its offers are added and count as seen."""
+    _install(monkeypatch)
+    import sys
+    import types
+
+    class FakeAuto(BaseParser):
+        name = "fake_auto"
+
+        def read(self, source):
+            res = self.result(source)
+            url = self.params(source)["url"]
+            res.urls_read.append(url)
+            res.offers.append(self.offer(source, ext_id="p1", title="Stage Analyste actions - Janvier 2027",
+                                         url="https://other.test/o/p1", location="Paris", contract="Stage"))
+            # same offer as the main catalogue (same URL): must not be duplicated
+            res.offers.append(self.offer(source, ext_id="dup", title="Stage Juriste",
+                                         url="https://x.test/o/2", location="Paris", contract="Stage"))
+            return res
+
+    mod = types.ModuleType("scraper.parsers.fake_auto")
+    mod.Parser = FakeAuto
+    sys.modules["scraper.parsers.fake_auto"] = mod
+    monkeypatch.setitem(parsers.REGISTRY, "auto", "fake_auto")
+    store = _store(tmp_path)
+    store.db["sources"][0]["priority_url"] = "https://other.test/jobs"
+    STATE["offers"] = [("2", "Stage Juriste")]
+    run(store, Notifier(None, dry_run=True), use_browser=False, fetcher=FakeFetcher({}), only=["acme"])
+    ids = sorted(o["id"] for o in store.db["offers"])
+    assert ids == ["acme:2", "acme:p1"]
+    acme = next(x for x in store.db["sources"] if x["id"] == "acme")
+    assert "https://other.test/jobs" in acme["last_urls"]
+    assert acme.get("kind") == "fake_list"              # the main reader is kept
+
+    # the pasted page no longer lists p1 and the main catalogue never did: p1 is closed, 2 stays open
+    class EmptyAuto(FakeAuto):
+        def read(self, source):
+            return self.result(source)
+    mod.Parser = EmptyAuto
+    run(store, Notifier(None, dry_run=True), use_browser=False, fetcher=FakeFetcher({}), only=["acme"])
+    offers = {o["id"]: o for o in store.db["offers"]}
+    assert offers["acme:2"]["closed"] is False
+    assert offers["acme:p1"]["closed"] is True

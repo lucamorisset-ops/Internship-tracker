@@ -133,7 +133,7 @@ function explain(e) {
 }
 
 /* ------------------------------------------------------------ état */
-const state = { sources: [], offers: [], runs: [], lastRun: null, pending: [], loaded: false };
+const state = { sources: [], offers: [], runs: [], lastRun: null, inventorySince: null, pending: [], loaded: false };
 const ui = {
   tab: "offres", filter: recall("filter") || "cible", sort: recall("sort") || "rank",
   showClosed: recall("closed") === "1", q: "", confirmDelete: null, srcMsg: {}, runMsg: null, flash: null,
@@ -229,10 +229,20 @@ function watchFocus(id, fn) {
 
 /* ------------------------------------------------------------ offres */
 const companyOf = (o, map) => o.company || (map.get(o.source_id) || {}).company || o.source_id || "";
+/* Un stage écarté seulement pour le métier, le lieu ou la date est « hors critères » ;
+   CDI, alternance, VIE… (contrat) restent « exclus ». */
+function isStageHors(o) {
+  return o.relevance === "exclue" && !/contrat :|pas un stage/.test(o.reasons || "");
+}
+/* Stage hors critères repéré après la mise en place de l'inventaire complet : à signaler. */
+function isNewHors(o) {
+  if (!isStageHors(o) || !state.inventorySince || !o.first_seen) return false;
+  return Date.parse(o.first_seen) >= Date.parse(state.inventorySince);
+}
 function inFilter(o, f) {
   if (f === "cible") return o.relevance === "cible";
   if (f === "proche") return o.relevance === "proche";
-  if (f === "todo") return (o.status || "nouvelle") === "nouvelle" && o.relevance !== "exclue";
+  if (f === "todo") return (o.status || "nouvelle") === "nouvelle" && (o.relevance !== "exclue" || isNewHors(o));
   return true;
 }
 function baseVisible(o, map) {
@@ -317,11 +327,12 @@ function offerCard(o, map) {
   if (o.first_seen) m.appendChild(el("span", "mono", "Repérée le " + fmtTs(o.first_seen)));
   if (o.relevance === "cible") m.appendChild(pill("p-cible", "Ciblée"));
   else if (o.relevance === "proche") m.appendChild(pill("p-proche", "À vérifier"));
+  else if (isStageHors(o)) m.appendChild(pill("p-exclue", "Hors critères"));
   else if (o.relevance === "exclue") m.appendChild(pill("p-exclue", "Exclue"));
   if (o.closed) {
     const d = parseDay(o.closed_on);
     m.appendChild(pill("p-closed", "Plus en ligne" + (d ? " depuis le " + fmtDay(d) : "")));
-  } else if (status === "nouvelle") m.appendChild(pill("p-new", "Nouvelle"));
+  } else if (status === "nouvelle" && (o.relevance !== "exclue" || isNewHors(o))) m.appendChild(pill("p-new", "Nouvelle"));
   if (o.manual) m.appendChild(pill("p-manual", "Ajoutée à la main"));
   main.appendChild(m);
   if (o.reasons) main.appendChild(el("p", "reasons", o.reasons));
@@ -509,6 +520,7 @@ function sourceCard(s) {
   kv(dl, `URL lues au dernier passage (${used.length})`, used.length ? urlsNode(used) : "Aucune pour l'instant");
   const configured = urlList(s.read_urls).filter((u) => !used.includes(u));
   if (configured.length) kv(dl, "URL configurées", urlsNode(configured));
+  kv(dl, "Lien à lire", priorityNode(s));
   if (st !== "ok" && s.reason) kv(dl, "Pourquoi", s.reason);
   kv(dl, "Remarque", s.note || "");
   c.appendChild(dl);
@@ -550,6 +562,32 @@ function sourceCard(s) {
     c.appendChild(act);
   }
   return c;
+}
+/* Lien exact d'une page d'offres que le robot lit en plus du catalogue. */
+function priorityNode(s) {
+  const w = el("div", "prio");
+  const inp = el("input");
+  inp.type = "url"; inp.id = "prio-" + s.id; inp.value = s.priority_url || "";
+  inp.placeholder = "Colle l'adresse exacte d'une page d'offres";
+  inp.setAttribute("aria-label", "Lien à lire pour " + (s.company || s.id));
+  const b = el("button", "btn ghost sm", "Enregistrer");
+  b.type = "button";
+  b.addEventListener("click", () => savePriority(s, inp, b));
+  w.append(inp, b);
+  return w;
+}
+async function savePriority(s, inp, b) {
+  const v = inp.value.trim();
+  if (v && !/^https?:\/\/\S+$/i.test(v)) { ui.srcMsg[s.id] = { text: "L'adresse doit commencer par https://", cls: "err" }; renderSources(); return; }
+  b.disabled = true;
+  try {
+    await api.updateSource(s.id, { priority_url: v || null });
+    s.priority_url = v || null;
+    ui.srcMsg[s.id] = { text: v ? "Lien enregistré : le robot le lira au prochain passage." : "Lien retiré.", cls: "ok" };
+  } catch (e) {
+    ui.srcMsg[s.id] = { text: "Lien non enregistré : " + explain(e) + ".", cls: "err" };
+  }
+  renderSources();
 }
 async function toggleSource(s, cb) {
   const want = cb.checked;
@@ -878,10 +916,11 @@ function makeSupabaseApi(client) {
         client.from("sources").select("*").order("rank", { ascending: true, nullsFirst: false }).then(check),
         allOffers(),
         client.from("runs").select("*").order("id", { ascending: false }).limit(10).then(check),
-        client.from("meta").select("key,value").eq("key", "last_run").then(check),
+        client.from("meta").select("key,value").in("key", ["last_run", "inventory_since"]).then(check),
         client.from("run_requests").select("id,requested_at,sources").is("done_at", null).order("requested_at").then(check),
       ]);
-      return { sources, offers, runs, lastRun: (meta[0] && meta[0].value) || null, pending };
+      const mv = (k) => { const r = meta.find((x) => x.key === k); return r ? r.value : null; };
+      return { sources, offers, runs, lastRun: mv("last_run"), inventorySince: mv("inventory_since"), pending };
     },
     async updateOffer(id, fields) { one(check(await client.from("offers").update(fields).eq("id", id).select("id"))); },
     async insertSource(row) { check(await client.from("sources").insert(row)); },
@@ -1070,7 +1109,7 @@ function makeDemoApi(failWrites) {
       await wait(120);
       return clone({
         sources: db.sources.slice().sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999)),
-        offers: db.offers, runs: db.runs, lastRun: db.meta.last_run,
+        offers: db.offers, runs: db.runs, lastRun: db.meta.last_run, inventorySince: db.meta.inventory_since || null,
         pending: db.run_requests.filter((r) => !r.done_at),
       });
     },
