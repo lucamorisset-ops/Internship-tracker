@@ -24,7 +24,7 @@ from bs4 import BeautifulSoup
 
 from ..models import SourceResult, fold
 from .base import BaseParser
-from .generic import is_intermediary
+from .generic import intermediary_name, is_intermediary
 
 NO_URL_REASON = "Pas de page carrières officielle lisible pour cette entreprise."
 NO_URL_FIX = "Crée une alerte e-mail (ou un suivi LinkedIn) pour être prévenu de ses offres."
@@ -94,20 +94,39 @@ class Parser(BaseParser):
         res.complete = False
         res.status = "sans_catalogue"
         p = self.params(source)
-        if "url" in p:
-            url = p.get("url")
-        else:                                  # no explicit url: the official catalogue link, if any
-            url = source.get("catalog_url")
-            url = None if is_intermediary(url) else url
-        if not url:
-            res.reason, res.fix = NO_URL_REASON, NO_URL_FIX
+        # watch_url (a page Luca chose to monitor) > params.url > catalogue.
+        watch = p.get("watch_url") or p.get("url")
+        if watch is None and "url" not in p and not p.get("watch_url"):
+            watch = source.get("catalog_url")
+        catalog = source.get("catalog_url")
+
+        # Official page to watch: read it and hash it.
+        if watch and not is_intermediary(watch):
+            r = self.get(watch, res)
+            text = page_text(r.text)
+            res.page_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            res.reason = REASON + (EMPTY_NOTE if len(text) < 80 else "")
+            return self._maybe_change(source, watch, text, res)
+
+        # Only an intermediary page is known (JobTeaser, LinkedIn...): it is NEVER contacted
+        # — not even to hash it — because their terms forbid automated access. It is surfaced
+        # with an actionable reminder so Luca checks it himself.
+        inter_url = watch if (watch and is_intermediary(watch)) else (catalog if is_intermediary(catalog) else None)
+        if inter_url:
+            inter = intermediary_name(inter_url) or "un site intermédiaire"
+            company = source.get("company") or "cette entreprise"
+            res.reason = (f"{company} publie ses offres sur {inter}, un site intermédiaire que le robot "
+                          f"ne lit pas (conditions d'utilisation). Il ne peut pas la surveiller à ta place.")
+            res.fix = (f"Ouvre la page {inter} toi-même une fois par semaine (bouton « Ouvrir le catalogue »), "
+                       "crée une alerte e-mail sur le site officiel de l'entreprise, ou — si elle a une page "
+                       "carrières officielle — colle son adresse dans « Lien à lire » : le robot la lira.")
             return res
 
-        r = self.get(url, res)
-        text = page_text(r.text)
-        res.page_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        res.reason = REASON + (EMPTY_NOTE if len(text) < 80 else "")
+        res.reason, res.fix = NO_URL_REASON, NO_URL_FIX
+        return res
 
+    def _maybe_change(self, source: dict, url: str, text: str, res: SourceResult) -> SourceResult:
+        """Emit one notification offer when the watched page changed since last pass."""
         previous = source.get("page_hash")
         if previous and previous != res.page_hash:
             company = source.get("company") or "l'entreprise"

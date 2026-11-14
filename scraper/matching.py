@@ -274,6 +274,71 @@ def place_rank(offer: Offer, cities: list[str]) -> tuple[int, str]:
     return 9, "hors des villes choisies"
 
 
+# ---------------------------------------------------------------- keyword translation
+# Many career sites (BlackRock, Morgan Stanley, J.P. Morgan...) publish in English only,
+# so a keyword typed in French must also be searched in English (and the reverse). Each
+# entry lists the equivalents (accent-free, lower case) added next to the keyword Luca
+# typed, so "actions" also finds "equities", "crédit" also finds "credit", etc.
+KEYWORD_TRANSLATIONS: dict[str, list[str]] = {
+    "actions": ["equities", "equity", "stocks"],
+    "gestion actions": ["equity management", "equities"],
+    "obligataire": ["fixed income", "bonds"],
+    "obligations": ["bonds", "fixed income"],
+    "credit": ["credit"],
+    "dette": ["debt"],
+    "dette privee": ["private debt"],
+    "haut rendement": ["high yield"],
+    "convertibles": ["convertible bonds", "convertibles"],
+    "taux": ["rates", "interest rates"],
+    "monetaire": ["money market"],
+    "gestion": ["management", "asset management"],
+    "gerant": ["portfolio manager", "fund manager"],
+    "gestion de portefeuille": ["portfolio management"],
+    "analyste": ["analyst"],
+    "recherche": ["research"],
+    "strategie": ["strategy", "strategist"],
+    "allocation": ["asset allocation"],
+    "allocation d'actifs": ["asset allocation"],
+    "multi-actifs": ["multi-asset", "multi asset"],
+    "diversifie": ["multi-asset", "diversified"],
+    "small caps": ["small cap", "small & mid caps"],
+    "mid caps": ["mid cap"],
+    "value": ["value"],
+    "croissance": ["growth"],
+    "durable": ["sustainable", "sustainability"],
+    "responsable": ["responsible"],
+    "souverain": ["sovereign"],
+    "emergents": ["emerging markets", "emerging"],
+    "marches emergents": ["emerging markets"],
+    "immobilier": ["real estate"],
+    "infrastructure": ["infrastructure"],
+    "matieres premieres": ["commodities"],
+    "capital investissement": ["private equity"],
+    "non cote": ["private assets", "private markets"],
+    "actifs non cotes": ["private assets", "private markets"],
+    "specialiste produit": ["product specialist"],
+    "relations investisseurs": ["investor relations"],
+}
+# Reverse direction (English keyword -> French equivalents) built from the table above.
+_KW_REVERSE: dict[str, list[str]] = {}
+for _fr, _ens in KEYWORD_TRANSLATIONS.items():
+    for _en in _ens:
+        _KW_REVERSE.setdefault(fold(_en), []).append(_fr)
+
+
+def keyword_variants(k: str) -> list[str]:
+    """A user keyword plus its translations (both directions), accent-free and deduplicated."""
+    k = fold(k).strip()
+    if not k:
+        return []
+    out = [k]
+    for v in KEYWORD_TRANSLATIONS.get(k, []) + _KW_REVERSE.get(k, []):
+        v = fold(v)
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
 # ---------------------------------------------------------------- main entry
 def _terms_for(criteria: dict) -> list[str]:
     terms: list[str] = []
@@ -283,9 +348,10 @@ def _terms_for(criteria: dict) -> list[str]:
     if isinstance(kw, list):
         kw = ",".join(kw)
     for k in re.split(r"[,;\n]+", kw):
-        k = fold(k).strip()
-        if k:
-            terms.append(re.escape(k))
+        for variant in keyword_variants(k):   # the keyword and its FR/EN translations
+            esc = re.escape(variant)
+            if esc not in terms:
+                terms.append(esc)
     return terms
 
 

@@ -105,3 +105,23 @@ def test_assume_internship_when_catalogue_filtered():
 def test_duration_downgrades():
     o = classify(mk("Stage assistant gérant actions - 12 mois"), today=TODAY)
     assert o.relevance == "proche"
+
+
+def test_keyword_translation_matches_english_and_french():
+    """A keyword typed in French also matches an English career page, and the reverse."""
+    # French keyword "actions" on an English-titled offer
+    crit = {"types": [], "keywords": "actions"}
+    assert classify(mk("Internship - Equity Research Analyst"), crit, today=TODAY).relevance == "cible"
+    # English keyword "credit" on a French-titled offer
+    crit_en = {"types": [], "keywords": "credit"}
+    assert classify(mk("Stage - Analyste Crédit H/F"), crit_en, today=TODAY).relevance == "cible"
+    # "obligataire" should reach "fixed income"
+    crit_fi = {"types": [], "keywords": "obligataire"}
+    assert classify(mk("Off-cycle Internship - Fixed Income", "London"), crit_fi, today=TODAY).relevance == "cible"
+
+
+def test_keyword_variants_helper():
+    from scraper.matching import keyword_variants
+    assert "equities" in keyword_variants("actions")
+    assert "credit" in keyword_variants("credit")
+    assert keyword_variants("") == []

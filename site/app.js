@@ -137,7 +137,9 @@ const state = { sources: [], offers: [], runs: [], lastRun: null, inventorySince
 const ui = {
   tab: "offres", filter: recall("filter") || "cible", sort: recall("sort") || "rank",
   showClosed: recall("closed") === "1", q: "", confirmDelete: null, srcMsg: {}, runMsg: null, flash: null,
+  srcFilter: recall("srcfilter") || "all", promote: null,
 };
+if (!["all", "new"].includes(ui.srcFilter)) ui.srcFilter = "all";
 if (!["cible", "proche", "todo", "all"].includes(ui.filter)) ui.filter = "cible";
 if (!["rank", "recent", "old"].includes(ui.sort)) ui.sort = "rank";
 const drafts = new Map(); // id d'offre -> { value, error } : notes pas encore enregistrées
@@ -229,6 +231,18 @@ function watchFocus(id, fn) {
 
 /* ------------------------------------------------------------ offres */
 const companyOf = (o, map) => o.company || (map.get(o.source_id) || {}).company || o.source_id || "";
+// Mots fréquents retirés quand on devine le mot-clé d'une offre « à vérifier » à suivre.
+const PROMOTE_STOP = new Set(("stage stagiaire internship intern trainee off offcycle cycle mois months month " +
+  "an ans year years hf fh mf fm hfd mwd le la les de des du un une et and or the pour chez " +
+  "janvier fevrier mars avril mai juin juillet aout septembre octobre novembre decembre " +
+  "january february march april may june july august september october november december " +
+  "2024 2025 2026 2027 2028 cdi cdd").split(/\s+/));
+// Devine un mot-clé parlant à partir du titre d'une offre (l'utilisateur peut le corriger).
+function suggestKeyword(title) {
+  const words = fold(title).replace(/[^a-z0-9 ]+/g, " ").split(/\s+/)
+    .filter((w) => w.length > 2 && !PROMOTE_STOP.has(w) && !/^\d+$/.test(w));
+  return words.slice(0, 3).join(" ");
+}
 /* Un stage écarté seulement pour le métier, le lieu ou la date est « hors critères » ;
    CDI, alternance, VIE… (contrat) restent « exclus ». */
 function isStageHors(o) {
@@ -336,6 +350,7 @@ function offerCard(o, map) {
   if (o.manual) m.appendChild(pill("p-manual", "Ajoutée à la main"));
   main.appendChild(m);
   if (o.reasons) main.appendChild(el("p", "reasons", o.reasons));
+  if (o.relevance === "proche" && !o.closed) main.appendChild(promoteNode(o, map));
   row.appendChild(main);
 
   // statut de suivi
@@ -377,6 +392,71 @@ function autosize(ta) {
   ta.style.height = Math.min(ta.scrollHeight + 2, 240) + "px";
 }
 function offerById(id) { return state.offers.find((x) => x.id === id); }
+
+/* « Suivre ce métier » : ajoute le mot-clé de l'offre aux critères de l'entreprise, pour que
+   les prochaines offres de ce type soient classées « ciblées » (choix déterministe et explicite). */
+function promoteNode(o, map) {
+  const wrap = el("div", "promote");
+  if (ui.promote && ui.promote.id === o.id) {
+    const company = companyOf(o, map);
+    const box = el("div", "promote-box");
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", "Suivre ce métier");
+    box.appendChild(el("span", null,
+      `Ajouter un mot-clé aux critères de ${company} ? Les prochaines offres contenant ce mot seront classées « ciblées ».`));
+    const rowA = el("div", "promote-actions");
+    const inp = el("input"); inp.type = "text"; inp.value = ui.promote.value || "";
+    inp.id = "promote-" + o.id; inp.setAttribute("aria-label", "Mot-clé à ajouter aux critères");
+    inp.addEventListener("input", () => { ui.promote.value = inp.value; });
+    const yes = el("button", "btn sm", "Ajouter aux critères"); yes.type = "button";
+    yes.addEventListener("click", () => doPromote(o, inp.value));
+    const no = el("button", "btn ghost sm", "Annuler"); no.type = "button";
+    no.addEventListener("click", () => { ui.promote = null; renderOffers(); });
+    rowA.append(inp, yes, no);
+    box.appendChild(rowA);
+    const msg = ui.srcMsg["promote-" + o.id];
+    if (msg) { const p = el("span", "save-state " + (msg.cls || ""), msg.text); p.setAttribute("role", "status"); box.appendChild(p); }
+    wrap.appendChild(box);
+  } else {
+    const b = el("button", "btn ghost sm", "Suivre ce métier");
+    b.type = "button";
+    b.setAttribute("aria-label", "Suivre ce métier pour « " + (o.title || "offre") + " »");
+    b.addEventListener("click", () => { ui.promote = { id: o.id, value: suggestKeyword(o.title) }; renderOffers(); });
+    wrap.appendChild(b);
+  }
+  return wrap;
+}
+async function doPromote(o, value) {
+  const keyword = (value || "").trim();
+  const key = "promote-" + o.id;
+  if (!keyword) { ui.srcMsg[key] = { text: "Indique un mot-clé.", cls: "err" }; renderOffers(); return; }
+  const src = sourceById().get(o.source_id);
+  if (!src) { ui.promote = null; renderOffers(); return; }
+  const cur = (src.criteria && typeof src.criteria === "object") ? src.criteria : {};
+  const existing = typeof cur.keywords === "string" ? cur.keywords
+    : (Array.isArray(cur.keywords) ? cur.keywords.join(", ") : "");
+  const have = existing.split(/[,;\n]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+  if (have.includes(keyword.toLowerCase())) {
+    ui.promote = null;
+    flashes.set(o.id, { text: "« " + keyword + " » est déjà dans les critères.", cls: "ok", at: Date.now() });
+    renderOffers(); return;
+  }
+  const newCriteria = Object.assign({}, cur, { keywords: existing ? existing + ", " + keyword : keyword });
+  ui.srcMsg[key] = { text: "Enregistrement…" };
+  renderOffers();
+  try {
+    await api.updateSource(o.source_id, { criteria: newCriteria });
+    src.criteria = newCriteria;
+    ui.promote = null;
+    delete ui.srcMsg[key];
+    flashes.set(o.id, { text: "Mot-clé ajouté : les prochaines offres de ce type seront ciblées.", cls: "ok", at: Date.now() });
+    renderAll();
+    refresh();
+  } catch (e) {
+    ui.srcMsg[key] = { text: "Non enregistré : " + explain(e) + ".", cls: "err" };
+    renderOffers();
+  }
+}
 
 async function saveStatus(id, sel, sst) {
   const o = offerById(id);
@@ -454,13 +534,44 @@ function urlsNode(urls) {
   urls.forEach((u) => { const li = el("li"); li.appendChild(link(u, u, "url")); ul.appendChild(li); });
   return ul;
 }
+// Critères par défaut du tracker (miroir de DEFAULT_CRITERIA dans scraper/matching.py).
+// Sert à afficher la liste précise des critères utilisés, même quand une entreprise
+// n'a pas de critères propres — plus de libellé vague « critères généraux ».
+const DEFAULT_CRITERIA = {
+  types: ["Gestion d'actifs", "Equity research", "Investment specialist", "Investment analyst"],
+  starts: ["Janvier 2027", "Mars 2027"],
+  cities: ["Paris", "Londres"],
+  keywords: "",
+};
+function hasCustomCriteria(cr) {
+  if (!cr || typeof cr !== "object") return false;
+  return ["types", "starts", "cities", "keywords"].some((k) => {
+    const v = cr[k];
+    return Array.isArray(v) ? v.length : v != null && v !== "";
+  });
+}
+function effectiveCriteria(cr) {
+  const c = cr && typeof cr === "object" ? cr : {};
+  const pick = (k) => { const v = c[k]; return Array.isArray(v) ? v : (v != null && v !== "" ? v : null); };
+  let cities = pick("cities") || DEFAULT_CRITERIA.cities;
+  if (Array.isArray(cities)) cities = cities.join(", ");
+  return {
+    types: (pick("types") && pick("types").length ? pick("types") : DEFAULT_CRITERIA.types),
+    starts: (pick("starts") && pick("starts").length ? pick("starts") : DEFAULT_CRITERIA.starts),
+    cities,
+    keywords: pick("keywords") || "",
+  };
+}
 function criteriaText(cr) {
-  if (!cr || typeof cr !== "object") return "";
+  const c = effectiveCriteria(cr);
   const parts = [
-    (cr.types || []).join(", "), (cr.starts || []).join(", "), cr.cities || "",
-    cr.keywords ? "Mots-clés : " + cr.keywords : "",
-  ].filter(Boolean);
-  return parts.join(" · ");
+    "Métiers : " + c.types.join(", "),
+    "Démarrage : " + c.starts.join(", "),
+    "Villes : " + c.cities,
+  ];
+  if (c.keywords) parts.push("Mots-clés : " + c.keywords);
+  const prefix = hasCustomCriteria(cr) ? "" : "Par défaut — ";
+  return prefix + parts.join(" · ");
 }
 function lastPassText(s) {
   if (!s.last_checked) return "Pas encore lue par le robot";
@@ -479,13 +590,35 @@ function catalogNode(s) {
   return w;
 }
 
-function renderSources() { guarded("source-list", buildSources); }
+// Une entreprise « nouvellement ajoutée » : ajoutée depuis le site il y a moins de 14 jours.
+const RECENT_ADD_MS = 14 * 24 * 3600 * 1000;
+function isRecentlyAdded(s) {
+  if (!s.added_from_site) return false;
+  const d = toDate(s.created_at);
+  return d ? Date.now() - d.getTime() < RECENT_ADD_MS : true;
+}
+function srcInFilter(s) { return ui.srcFilter === "new" ? isRecentlyAdded(s) : true; }
+function renderSrcFilterButtons() {
+  document.querySelectorAll("#src-filters button").forEach((b) => {
+    const f = b.dataset.sf;
+    b.setAttribute("aria-pressed", f === ui.srcFilter ? "true" : "false");
+    const n = f === "new" ? state.sources.filter(isRecentlyAdded).length : state.sources.length;
+    b.querySelector(".n").textContent = state.loaded ? String(n) : "";
+  });
+}
+function renderSources() { renderSrcFilterButtons(); guarded("source-list", buildSources); }
 function buildSources(box) {
   box.textContent = "";
   if (!state.loaded) { box.appendChild(el("div", "empty", "Chargement des sources…")); return; }
+  renderSrcFilterButtons();
   if (!state.sources.length) { box.appendChild(el("div", "empty", "Aucune source enregistrée.")); return; }
+  const list = state.sources.filter(srcInFilter);
+  if (!list.length) {
+    box.appendChild(el("div", "empty", "Aucune entreprise ajoutée depuis le site ces 14 derniers jours."));
+    return;
+  }
   const frag = document.createDocumentFragment();
-  state.sources.forEach((s) => frag.appendChild(sourceCard(s)));
+  list.forEach((s) => frag.appendChild(sourceCard(s)));
   box.appendChild(frag);
   if (ui.focusConfirm) { ui.focusConfirm = false; const c = document.getElementById("confirm-yes"); if (c) c.focus(); }
 }
@@ -496,6 +629,7 @@ function sourceCard(s) {
   top.appendChild(el("h3", null, s.company || s.id));
   const st = s.status || "a_configurer";
   top.appendChild(pill("s-" + st, SLABEL[st] || st));
+  if (isRecentlyAdded(s)) top.appendChild(pill("p-new", "Nouvelle"));
   if (!enabled) top.appendChild(pill("s-pause", "En pause"));
   if (s.last_method) {
     top.appendChild(s.last_method === "navigateur"
@@ -514,7 +648,7 @@ function sourceCard(s) {
   const dl = el("dl", "kv");
   kv(dl, "Catalogue", catalogNode(s) || "À trouver au prochain passage");
   kv(dl, "Filtres appliqués", s.filters || "");
-  kv(dl, "Tes critères", criteriaText(s.criteria) || "Critères généraux du tracker");
+  kv(dl, "Critères utilisés", criteriaText(s.criteria));
   kv(dl, "Dernier passage", lastPassText(s));
   const used = urlList(s.last_urls);
   kv(dl, `URL lues au dernier passage (${used.length})`, used.length ? urlsNode(used) : "Aucune pour l'instant");
@@ -1025,6 +1159,9 @@ function bindStatic() {
   const sort = $("sort");
   sort.value = ui.sort;
   sort.addEventListener("change", () => { ui.sort = sort.value; store("sort", ui.sort); renderOffers(); });
+  document.querySelectorAll("#src-filters button").forEach((b) => b.addEventListener("click", () => {
+    ui.srcFilter = b.dataset.sf; store("srcfilter", ui.srcFilter); renderSources();
+  }));
   const sc = $("show-closed");
   sc.checked = ui.showClosed;
   sc.addEventListener("change", () => { ui.showClosed = sc.checked; store("closed", sc.checked ? "1" : "0"); renderOffers(); });

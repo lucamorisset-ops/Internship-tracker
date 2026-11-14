@@ -123,6 +123,10 @@ section.panel{display:grid;gap:14px;min-width:0}
 .meta{display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--muted);font-size:.85rem;align-items:center}
 .meta .co{color:var(--fg);font-weight:500}
 .reasons{font-size:.84rem;color:var(--muted)}
+.promote{margin-top:2px}
+.promote-box{display:grid;gap:8px;background:var(--accent-soft);border-radius:6px;padding:8px 10px;font-size:.85rem}
+.promote-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.promote-actions input{font:inherit;font-size:.85rem;padding:5px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);min-width:0;flex:1 1 200px}
 .note{grid-column:1/-1;font-size:.84rem;color:var(--muted)}
 .notebox{grid-column:1/-1;display:grid;gap:2px}
 .notebox textarea{font:inherit;font-size:.86rem;line-height:1.4;padding:6px 9px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%;min-height:2.3em;max-height:14em;resize:vertical;field-sizing:content}
@@ -345,6 +349,10 @@ fieldset.field{border:0;margin:0;padding:0;min-width:0}
       <div class="head">
         <h2>Sources et catalogues</h2>
         <span class="foot">« Ouvrir le catalogue » ouvre la liste officielle avec les filtres que le robot utilise.</span>
+      </div>
+      <div class="filters" id="src-filters" role="group" aria-label="Filtrer les entreprises">
+        <button type="button" data-sf="all" aria-pressed="true">Toutes<span class="n"></span></button>
+        <button type="button" data-sf="new" aria-pressed="false">Nouvellement ajoutées<span class="n"></span></button>
       </div>
       <p class="msg" id="src-msg" role="status" style="text-align:left;max-width:none"></p>
       <div class="list" id="source-list"><div class="empty">Chargement des sources…</div></div>

@@ -20,15 +20,38 @@ MONETA = {"id": "moneta", "company": "Moneta AM", "kind": "page_watch",
 MONETA_ROUTE = {r"moneta\.fr/contact/stagiaires-apprentis": "page_watch_moneta.html"}
 
 
-def test_page_watch_without_url_fetches_nothing(make_ctx):
+def test_page_watch_without_any_url_fetches_nothing(make_ctx):
     ctx = make_ctx({})
     src = {"id": "eleva", "company": "Eleva Capital", "kind": "page_watch",
-           "catalog_url": "https://www.jobteaser.com/en/companies/eleva-capital/job-offers", "params": {"url": None}}
+           "catalog_url": None, "params": {}}
     res = get_parser("page_watch", ctx).read(src)
     assert res.ok and res.status == "sans_catalogue" and not res.complete
     assert res.reason == "Pas de page carrières officielle lisible pour cette entreprise."
     assert res.fix == "Crée une alerte e-mail (ou un suivi LinkedIn) pour être prévenu de ses offres."
     assert ctx.fetcher.calls == [] and res.offers == [] and res.page_hash == ""
+
+
+def test_page_watch_intermediary_is_never_contacted(make_ctx):
+    """Intermediary-only company (Eleva, JobTeaser): surfaced with a reminder, never fetched."""
+    url = "https://www.jobteaser.com/en/companies/eleva-capital/job-offers"
+    src = {"id": "eleva", "company": "Eleva Capital", "kind": "page_watch",
+           "catalog_url": url, "params": {}}
+    ctx = make_ctx({r".": (200, "should-never-be-called")})
+    res = get_parser("page_watch", ctx).read(src)
+    assert res.ok and res.status == "sans_catalogue" and not res.complete
+    assert "JobTeaser" in res.reason and "site intermédiaire" in res.reason and res.fix
+    assert ctx.fetcher.calls == [] and res.page_hash == "" and res.offers == []
+
+
+def test_page_watch_watches_official_watch_url(make_ctx):
+    """New « Lien à surveiller » (watch_url): an official page is monitored for change."""
+    url = "https://www.exemple-am.com/carrieres"
+    src = {"id": "x", "company": "Exemple AM", "kind": "page_watch",
+           "catalog_url": None, "params": {"watch_url": url}, "page_hash": "0" * 64}
+    ctx = make_ctx({r"exemple-am\.com": (200, "<html><body><main>Stage gestion actions janvier</main></body></html>")})
+    res = get_parser("page_watch", ctx).read(src)
+    assert ctx.fetcher.calls == [url] and len(res.page_hash) == 64
+    assert len(res.offers) == 1 and res.offers[0].extra == {"fixed": True}
 
 
 def test_page_hash_ignores_whitespace_numbers_and_noise():
