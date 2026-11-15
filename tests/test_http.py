@@ -161,7 +161,7 @@ def test_fetcher_reads_contact_from_env(monkeypatch):
     assert f.session.headers["User-Agent"] == f.user_agent
 
 
-def test_make_session_enables_cache_when_ttl_set():
+def test_make_session_enables_cache_when_ttl_set(tmp_path, monkeypatch):
     """A positive TTL gives a CachedSession limited to GET/200; 0 gives a plain Session."""
     import datetime
     import requests
@@ -169,6 +169,7 @@ def test_make_session_enables_cache_when_ttl_set():
 
     assert type(make_session(0)) is requests.Session
 
+    monkeypatch.setenv("SCRAPER_CACHE_PATH", str(tmp_path / "http_cache"))   # not in the repo
     session = make_session(cache_ttl=3600)
     if type(session).__name__ != "CachedSession":
         import pytest
