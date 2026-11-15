@@ -115,6 +115,56 @@ def replayable_headers(headers: dict) -> dict:
     return {k: v for k, v in headers.items() if k.lower() not in VOLATILE_HEADERS}
 
 
+# ------------------------------------------------------------------ replay modes (§4.3)
+# recall modes, from lightest to heaviest; the one that works is remembered per company
+REPLAY_MODES = ("requests", "session", "browser")
+_CSRF_META = re.compile(r'<meta[^>]+name=["\']?csrf-token["\']?[^>]+content=["\']([^"\']+)', re.I)
+
+
+def csrf_from_html(html: str) -> str | None:
+    """The anonymous CSRF token a page puts in <meta name="csrf-token">, if any."""
+    m = _CSRF_META.search(html or "")
+    return m.group(1) if m else None
+
+
+def cookie_header(cookies: list[dict] | None) -> str:
+    """A Cookie header from Playwright-style cookies, dropping any anti-bot cookie."""
+    return "; ".join(f"{c['name']}={c.get('value', '')}" for c in (cookies or [])
+                     if c.get("name") and not is_antibot(c["name"]))
+
+
+def session_headers(headers: dict, *, cookies: list[dict] | None = None, csrf: str | None = None,
+                    csrf_header: str = "X-CSRF-Token") -> dict:
+    """Headers for the 'session' mode: the captured ones plus an anonymous cookie / CSRF token."""
+    h = dict(headers or {})
+    ck = cookie_header(cookies)
+    if ck:
+        h["Cookie"] = ck
+    if csrf:
+        h[csrf_header] = csrf
+    return h
+
+
+def replay(candidate: Candidate, fetcher, *, mode: str = "requests",
+           cookies: list[dict] | None = None, csrf: str | None = None) -> Any:
+    """Call the endpoint once in `mode` and return parsed JSON (raises on HTTP error).
+
+    - 'requests': replay the captured request with its non-volatile headers only;
+    - 'session' : add an anonymous session cookie / CSRF token (never an anti-bot one);
+    - 'browser' : handled by the caller via Playwright's context.request (not here).
+    Only anonymous tokens are ever reused; anti-bot cookies are dropped by cookie_header.
+    """
+    headers = {"Accept": "application/json", **replayable_headers(candidate.headers)}
+    if mode == "session":
+        headers = session_headers(headers, cookies=cookies, csrf=csrf)
+    if candidate.method.upper() == "POST":
+        headers.setdefault("Content-Type", "application/json")
+        r = fetcher.request("POST", candidate.url, headers=headers, data=candidate.post_data)
+    else:
+        r = fetcher.get(candidate.url, headers=headers)
+    return r.json()
+
+
 # ------------------------------------------------------------------ anti-bot guard
 def is_antibot(name: str) -> bool:
     n = (name or "").lower()

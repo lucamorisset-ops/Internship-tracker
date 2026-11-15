@@ -104,6 +104,53 @@ def test_auto_replays_remembered_endpoint_with_pagination(make_ctx):
     assert sum("offset=" in c for c in ctx.fetcher.calls) == 3          # two full pages + the empty one
 
 
+# --------------------------------------------------------------------------- replay modes (§4.3)
+def test_cookie_header_drops_antibot():
+    ck = discover.cookie_header([{"name": "datadome", "value": "x"}, {"name": "sid", "value": "abc"},
+                                 {"name": "__cf_bm", "value": "y"}])
+    assert ck == "sid=abc"
+
+
+def test_csrf_from_html():
+    html = '<meta name="csrf-token" content="tok-123">'
+    assert discover.csrf_from_html(html) == "tok-123"
+    assert discover.csrf_from_html("<html></html>") is None
+
+
+def test_replay_session_mode_sends_anonymous_cookie():
+    """Simulated session refresh: the endpoint needs an anonymous cookie; 'session' mode succeeds."""
+    from scraper.http import FetchError
+
+    class Resp:
+        def __init__(self, data):
+            self._d = data
+        def json(self):
+            return self._d
+
+    class SessionFetcher:
+        def __init__(self):
+            self.headers_seen = []
+        def get(self, url, headers=None, **kw):
+            self.headers_seen.append(headers or {})
+            if "sid=" not in (headers or {}).get("Cookie", ""):
+                raise FetchError(url, 403)        # needs the visitor session cookie
+            return Resp({"results": [{"title": "Stage", "id": "1"}]})
+
+    cand = discover.Candidate(method="GET", url="https://api.test/jobs", json_path="$.results",
+                              headers={"Accept": "application/json", "Referer": "https://x.test/"})
+    f = SessionFetcher()
+    # mode 'requests' (no cookie) fails
+    try:
+        discover.replay(cand, f, mode="requests")
+        assert False, "expected FetchError"
+    except FetchError:
+        pass
+    # mode 'session' with the anonymous cookie succeeds
+    data = discover.replay(cand, f, mode="session", cookies=[{"name": "sid", "value": "abc"}])
+    assert data == {"results": [{"title": "Stage", "id": "1"}]}
+    assert "sid=abc" in f.headers_seen[-1]["Cookie"]
+
+
 def test_discover_skipped_without_browser(make_ctx):
     """Live discovery stays off unless ENABLE_BROWSER and a browser are present."""
     ctx = make_ctx({})
