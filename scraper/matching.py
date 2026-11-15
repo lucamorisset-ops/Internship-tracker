@@ -355,8 +355,14 @@ def _terms_for(criteria: dict) -> list[str]:
     return terms
 
 
-def merge_criteria(source_criteria: dict | None) -> dict:
-    c = dict(DEFAULT_CRITERIA)
+def merge_criteria(source_criteria: dict | None, defaults: dict | None = None) -> dict:
+    """Source criteria over the tracker defaults. `defaults` (e.g. global criteria edited
+    from the site, stored in meta.default_criteria) overrides the built-in DEFAULT_CRITERIA."""
+    base = dict(DEFAULT_CRITERIA)
+    for k, v in (defaults or {}).items():
+        if v not in (None, "", []):
+            base[k] = v
+    c = dict(base)
     for k, v in (source_criteria or {}).items():
         if v not in (None, "", []):
             c[k] = v
@@ -366,9 +372,9 @@ def merge_criteria(source_criteria: dict | None) -> dict:
 
 
 def classify(offer: Offer, criteria: dict | None = None, today: date | None = None,
-             assume_internship: bool = False) -> Offer:
+             assume_internship: bool = False, defaults: dict | None = None) -> Offer:
     """Fill offer.relevance / start_label / reasons in place and return it."""
-    c = merge_criteria(criteria)
+    c = merge_criteria(criteria, defaults)
     title = fold(offer.title)
     contract = fold(offer.contract)
     everything = fold(offer.text())

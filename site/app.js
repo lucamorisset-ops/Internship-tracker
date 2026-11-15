@@ -489,7 +489,10 @@ async function doPromote(o, value) {
     src.criteria = newCriteria;
     ui.promote = null;
     delete ui.srcMsg[key];
-    flashes.set(o.id, { text: "Mot-clé ajouté : les prochaines offres de ce type seront ciblées.", cls: "ok", at: Date.now() });
+    // ask the robot to re-read this company soon: it re-sorts its existing offers with the new criteria
+    let extra = "";
+    try { await api.requestRun([o.source_id]); } catch { extra = " (le reclassement aura lieu au prochain passage)"; }
+    flashes.set(o.id, { text: "Mot-clé ajouté : les offres de ce type seront reclassées « ciblées »" + extra + ".", cls: "ok", at: Date.now() });
     renderAll();
     refresh();
   } catch (e) {

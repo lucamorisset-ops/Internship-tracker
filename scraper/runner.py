@@ -145,7 +145,18 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
     sources = store.load_sources()
     if only:
         sources = [s for s in sources if s["id"] in only]
-    reclassed = reclassify(store, sources, today) if not only else []
+    try:
+        defaults = store.get_meta("default_criteria")           # global criteria edited from the site
+    except Exception:  # noqa: BLE001
+        defaults = None
+    try:
+        open_rows = store.load_open_offers_full()               # full rows, for (re)classification
+    except Exception:  # noqa: BLE001
+        open_rows = []
+    reclassed = reclassify(store, sources, today, defaults, open_rows) if not only else []
+    open_by_source: dict[str, list[dict]] = {}
+    for r in open_rows:
+        open_by_source.setdefault(r["source_id"], []).append(r)
     existing = store.load_offers()
     by_key: dict[tuple[str, str], dict] = {}
     for o in existing:
@@ -195,7 +206,7 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
                 if off.extra.get("fixed"):          # e.g. page_watch: relevance set by the parser
                     new_offers.append(off)
                     continue
-                classify(off, criteria, today, assume_internship=assume_intern)
+                classify(off, criteria, today, assume_internship=assume_intern, defaults=defaults)
                 second_chance = off.reasons == METIER_ONLY or (
                     # companies added from the site: the list rarely says "stage", the offer page often does
                     kind in ("auto", "generic")
@@ -211,7 +222,7 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
                     parser.enrich(off, res)
                 except Exception as e:  # noqa: BLE001 - details are optional
                     log.info("  fiche illisible %s: %s", off.url, e)
-                classify(off, criteria, today, assume_internship=assume_intern)
+                classify(off, criteria, today, assume_internship=assume_intern, defaults=defaults)
 
             # offers that disappeared from a complete, successful read are closed
             closed: list[str] = []
@@ -236,6 +247,11 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
                 store.touch_offers(seen_ids)
             if closed:
                 store.close_offers(sorted(set(closed)), today.isoformat())
+
+            # re-sort this source's already-stored open offers with its current criteria, so a
+            # criteria change (e.g. a keyword added with « Suivre ce métier ») takes effect now
+            reclassed += reclassify_open(store, src, open_by_source.get(src["id"], []), today,
+                                         defaults, skip_ids=set(closed))
 
             fields = {
                 "status": res.status if res.ok or res.status != "ok" else "erreur",
@@ -288,7 +304,31 @@ def run(store, notifier: Notifier, *, only: list[str] | None = None, trigger: st
 ROBOT_REASON = re.compile(r"^(métier|contrat|pas un stage|lieu|démarrage)")
 
 
-def reclassify(store, sources: list[dict], today: date) -> list[Offer]:
+_RANK = {"cible": 0, "proche": 1, "exclue": 2}
+
+
+def _row_to_offer(r: dict) -> Offer:
+    return Offer(source_id=r["source_id"], ext_id=r["id"].split(":", 1)[-1], title=r.get("title") or "",
+                 url="", location=r.get("location") or "", country=r.get("country") or "",
+                 contract=r.get("contract") or "", description=r.get("description") or "")
+
+
+def _resort_row(store, r: dict, criteria, today: date, assume: bool, defaults: dict | None) -> Offer | None:
+    """Re-sort one stored open offer in place; return it if it moved UP, else None."""
+    if r.get("manual") or not ROBOT_REASON.match(r.get("reasons") or ""):
+        return None
+    o = _row_to_offer(r)
+    classify(o, criteria, today, assume_internship=assume, defaults=defaults)
+    before = r.get("relevance")
+    if (o.relevance, o.start_label, o.reasons) == (before, r.get("start_label"), r.get("reasons")):
+        return None
+    store.update_offer(r["id"], {"relevance": o.relevance, "start_label": o.start_label, "reasons": o.reasons})
+    r["relevance"], r["start_label"], r["reasons"] = o.relevance, o.start_label, o.reasons
+    return o if _RANK.get(o.relevance, 2) < _RANK.get(before, 2) else None
+
+
+def reclassify(store, sources: list[dict], today: date, defaults: dict | None = None,
+               rows: list[dict] | None = None) -> list[Offer]:
     """When the sorting rules changed (MATCHING_VERSION), sort the open offers again.
 
     Only offers sorted by the robot are touched (offers imported from the old tracker
@@ -297,31 +337,42 @@ def reclassify(store, sources: list[dict], today: date) -> list[Offer]:
     try:
         if store.get_meta("matching_version") == MATCHING_VERSION:
             return []
-        rows = store.load_open_offers_full()
+        rows = rows if rows is not None else store.load_open_offers_full()
     except Exception as e:  # noqa: BLE001 - never block a pass for this
         log.warning("re-tri impossible : %s", e)
         return []
     crit = {s["id"]: s.get("criteria") for s in sources}
     params = {s["id"]: s.get("params") or {} for s in sources}
     improved: list[Offer] = []
-    changed = 0
     for r in rows:
-        if r.get("manual") or not ROBOT_REASON.match(r.get("reasons") or ""):
-            continue
-        o = Offer(source_id=r["source_id"], ext_id=r["id"].split(":", 1)[-1], title=r.get("title") or "",
-                  url="", location=r.get("location") or "", country=r.get("country") or "",
-                  contract=r.get("contract") or "", description=r.get("description") or "")
-        classify(o, crit.get(r["source_id"]), today,
-                 assume_internship=bool(params.get(r["source_id"], {}).get("internships_only")))
-        if (o.relevance, o.start_label, o.reasons) != (r.get("relevance"), r.get("start_label"), r.get("reasons")):
-            store.update_offer(r["id"], {"relevance": o.relevance, "start_label": o.start_label, "reasons": o.reasons})
-            changed += 1
-            rank = {"cible": 0, "proche": 1, "exclue": 2}
-            if rank.get(o.relevance, 2) < rank.get(r.get("relevance"), 2):
-                improved.append(o)
+        o = _resort_row(store, r, crit.get(r["source_id"]), today,
+                        bool(params.get(r["source_id"], {}).get("internships_only")), defaults)
+        if o is not None:
+            improved.append(o)
     store.set_meta("matching_version", MATCHING_VERSION)
-    log.info("Re-tri des offres ouvertes (règles %s) : %d modifiées, %d remontées.",
-             MATCHING_VERSION, changed, len(improved))
+    log.info("Re-tri des offres ouvertes (règles %s) : %d remontées.", MATCHING_VERSION, len(improved))
+    return improved
+
+
+def reclassify_open(store, source: dict, rows: list[dict], today: date,
+                    defaults: dict | None = None, skip_ids: set[str] | None = None) -> list[Offer]:
+    """Re-sort THIS source's already-open offers with its current criteria, every pass.
+
+    This is what makes a criteria change (e.g. a keyword added from the site with
+    « Suivre ce métier ») take effect on the offers already in the database at the next
+    pass, not only on future offers. `rows` are this source's open offers with their full
+    fields (load_open_offers_full). Robot-sorted, non-manual offers only.
+    """
+    criteria = source.get("criteria") or None
+    assume = bool((source.get("params") or {}).get("internships_only"))
+    skip = skip_ids or set()
+    improved: list[Offer] = []
+    for r in rows:
+        if r.get("closed") or r["id"] in skip:
+            continue
+        o = _resort_row(store, r, criteria, today, assume, defaults)
+        if o is not None:
+            improved.append(o)
     return improved
 
 
