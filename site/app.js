@@ -138,6 +138,7 @@ const ui = {
   tab: "offres", filter: recall("filter") || "cible", sort: recall("sort") || "rank",
   showClosed: recall("closed") === "1", q: "", confirmDelete: null, srcMsg: {}, runMsg: null, flash: null,
   srcFilter: recall("srcfilter") || "all", promote: null,
+  fCompany: recall("fcompany") || "", fCity: recall("fcity") || "", fStart: recall("fstart") || "",
 };
 if (!["all", "new"].includes(ui.srcFilter)) ui.srcFilter = "all";
 if (!["cible", "proche", "todo", "all"].includes(ui.filter)) ui.filter = "cible";
@@ -259,11 +260,27 @@ function inFilter(o, f) {
   if (f === "todo") return (o.status || "nouvelle") === "nouvelle" && (o.relevance !== "exclue" || isNewHors(o));
   return true;
 }
+/* Ville grossière pour le filtre, alignée sur les villes du tracker (Paris, Londres). */
+const PARIS_RE = /paris|ile[- ]de[- ]france|\bidf\b|la defense|puteaux|courbevoie|neuilly|boulogne|levallois|issy|montrouge|nanterre|saint[- ]denis|charenton|clichy|\((?:75|92|93|94)\)|\b(?:75|92|93|94)\d{3}\b/;
+const LONDON_RE = /london|londres/;
+function cityOf(o) {
+  const loc = fold((o.location || "") + " " + (o.country || ""));
+  if (!loc.trim()) return "Non précisé";
+  if (PARIS_RE.test(loc)) return "Paris";
+  if (LONDON_RE.test(loc)) return "Londres";
+  return "Autre";
+}
+function matchesCritFilters(o, map) {
+  if (ui.fCompany && companyOf(o, map) !== ui.fCompany) return false;
+  if (ui.fCity && cityOf(o) !== ui.fCity) return false;
+  if (ui.fStart && (o.start_label || "Non précisé") !== ui.fStart) return false;
+  return true;
+}
 function baseVisible(o, map) {
   if (o.closed && !ui.showClosed) return false;
   const q = fold(ui.q.trim());
   if (q && !fold((o.title || "") + " " + companyOf(o, map)).includes(q)) return false;
-  return true;
+  return matchesCritFilters(o, map);
 }
 const REL_ORDER = { cible: 0, proche: 1, exclue: 2 };
 function sortOffers(list, map) {
@@ -302,8 +319,31 @@ function renderFilterButtons(base) {
     b.querySelector(".n").textContent = state.loaded ? String(base.filter((o) => inFilter(o, f)).length) : "";
   });
 }
+function fillSelect(sel, values, current, allLabel) {
+  if (!sel) return;
+  sel.textContent = "";
+  const opt0 = el("option", null, allLabel); opt0.value = ""; sel.appendChild(opt0);
+  values.forEach((v) => { const o = el("option", null, v); o.value = v; sel.appendChild(o); });
+  sel.value = values.includes(current) ? current : "";   // ui is authoritative; "" = tous
+}
+function renderOfferFilters(map) {
+  // options from all non-closed offers (so a filter never hides its own value)
+  const pool = state.offers.filter((o) => !o.closed || ui.showClosed);
+  const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
+  fillSelect($("f-company"), uniq(pool.map((o) => companyOf(o, map))).sort((a, b) => a.localeCompare(b)), ui.fCompany, "Toutes");
+  const cityOrder = { "Paris": 0, "Londres": 1, "Autre": 2, "Non précisé": 3 };
+  fillSelect($("f-city"), uniq(pool.map(cityOf)).sort((a, b) => (cityOrder[a] ?? 9) - (cityOrder[b] ?? 9)), ui.fCity, "Tous");
+  fillSelect($("f-start"), uniq(pool.map((o) => o.start_label || "Non précisé")).sort((a, b) => a.localeCompare(b)), ui.fStart, "Tous");
+  // keep ui in sync if a stored value is no longer available
+  ui.fCompany = $("f-company") ? $("f-company").value : ui.fCompany;
+  ui.fCity = $("f-city") ? $("f-city").value : ui.fCity;
+  ui.fStart = $("f-start") ? $("f-start").value : ui.fStart;
+  const reset = $("f-reset");
+  if (reset) reset.hidden = !(ui.fCompany || ui.fCity || ui.fStart);
+}
 function renderOffers() {
   const map = sourceById();
+  renderOfferFilters(map);
   renderFilterButtons(state.offers.filter((o) => baseVisible(o, map)));
   guarded("offer-list", buildOffers);
 }
@@ -1162,6 +1202,17 @@ function bindStatic() {
   document.querySelectorAll("#src-filters button").forEach((b) => b.addEventListener("click", () => {
     ui.srcFilter = b.dataset.sf; store("srcfilter", ui.srcFilter); renderSources();
   }));
+  const bindCrit = (id, key) => {
+    const s = $(id);
+    if (s) s.addEventListener("change", () => { ui[key] = s.value; store(key.toLowerCase(), s.value); dirty.delete("offer-list"); renderOffers(); });
+  };
+  bindCrit("f-company", "fCompany"); bindCrit("f-city", "fCity"); bindCrit("f-start", "fStart");
+  const fr = $("f-reset");
+  if (fr) fr.addEventListener("click", () => {
+    ui.fCompany = ui.fCity = ui.fStart = "";
+    ["fcompany", "fcity", "fstart"].forEach((k) => store(k, ""));
+    dirty.delete("offer-list"); renderOffers();
+  });
   const sc = $("show-closed");
   sc.checked = ui.showClosed;
   sc.addEventListener("change", () => { ui.showClosed = sc.checked; store("closed", sc.checked ? "1" : "0"); renderOffers(); });

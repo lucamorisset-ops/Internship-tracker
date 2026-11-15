@@ -157,6 +157,8 @@ select{font:inherit;font-size:.85rem;padding:5px 8px;border-radius:6px;border:1p
 /* Barre d'outils des offres */
 .tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;min-width:0}
 .sortbox{display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--muted)}
+.fsel{display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--muted)}
+.fsel select{max-width:14rem}
 .subtools{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;min-width:0}
 .search{font:inherit;font-size:.88rem;padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--fg);width:min(340px,100%);min-width:0}
 .check{display:inline-flex;align-items:center;gap:6px;font-size:.84rem;color:var(--muted);cursor:pointer}
@@ -340,6 +342,13 @@ fieldset.field{border:0;margin:0;padding:0;min-width:0}
       <div class="subtools">
         <label class="vh" for="q">Rechercher une offre par intitulé ou entreprise</label>
         <input type="search" class="search" id="q" placeholder="Rechercher un intitulé ou une entreprise" autocomplete="off">
+        <label class="fsel">Entreprise
+          <select id="f-company"><option value="">Toutes</option></select></label>
+        <label class="fsel">Lieu
+          <select id="f-city"><option value="">Tous</option></select></label>
+        <label class="fsel">Démarrage
+          <select id="f-start"><option value="">Tous</option></select></label>
+        <button type="button" class="btn ghost sm" id="f-reset" hidden>Réinitialiser</button>
         <label class="check"><input type="checkbox" id="show-closed"> Afficher les offres fermées</label>
       </div>
       <div class="list" id="offer-list" aria-live="off"><div class="empty">Chargement des offres…</div></div>
