@@ -229,3 +229,40 @@ def test_priority_url_adds_offers_without_closing(tmp_path, monkeypatch):
     offers = {o["id"]: o for o in store.db["offers"]}
     assert offers["acme:2"]["closed"] is False
     assert offers["acme:p1"]["closed"] is True
+
+
+def test_no_new_offer_is_ever_missed_across_passes(tmp_path, monkeypatch):
+    """Guarantee for the user: each pass compares with the stored offers of every previous
+    pass. A new offer is captured and flagged « nouvelle »; a pass that fails never loses or
+    closes offers; an offer that reappears is reopened."""
+    _install(monkeypatch)
+    store = _store(tmp_path)
+    kw = dict(use_browser=False, fetcher=FakeFetcher({}), only=["acme"])
+
+    # pass 1: offer A only
+    STATE["offers"] = [("A", "Stage analyste actions A - Janvier 2027")]
+    run(store, Notifier(None, dry_run=True), today=date(2026, 11, 8), **kw)
+    assert {o["id"] for o in store.db["offers"]} == {"acme:A"}
+    assert store.db["offers"][0]["status"] == "nouvelle"
+
+    # pass 2: the site resists (read fails) -> A must NOT be closed or lost
+    store.db["sources"][0]["kind"] = "fake_robots"
+    run(store, Notifier(None, dry_run=True), today=date(2026, 11, 9), **kw)
+    a = next(o for o in store.db["offers"] if o["id"] == "acme:A")
+    assert a["closed"] is False                       # nothing lost on a failed pass
+
+    # pass 3: A still there + a brand-new B -> B is captured as a new « nouvelle » offer
+    store.db["sources"][0]["kind"] = "fake_list"
+    STATE["offers"] = [("A", "Stage analyste actions A - Janvier 2027"),
+                       ("B", "Stage analyste actions B - Mars 2027")]
+    s3 = run(store, Notifier(None, dry_run=True), today=date(2026, 11, 10), **kw)
+    offers = {o["id"]: o for o in store.db["offers"]}
+    assert set(offers) == {"acme:A", "acme:B"}        # both present, none duplicated
+    assert s3["totals"]["new"] == 1                   # only B counted as new in pass 3
+    assert offers["acme:B"]["status"] == "nouvelle" and offers["acme:B"]["relevance"] == "cible"
+
+    # pass 4: A disappears from a complete read -> only now is it closed; B stays open
+    STATE["offers"] = [("B", "Stage analyste actions B - Mars 2027")]
+    run(store, Notifier(None, dry_run=True), today=date(2026, 11, 11), **kw)
+    offers = {o["id"]: o for o in store.db["offers"]}
+    assert offers["acme:A"]["closed"] is True and offers["acme:B"]["closed"] is False
