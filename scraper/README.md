@@ -17,7 +17,9 @@ renvoie des offres (`scraper/parsers/auto.py`) :
    `ENABLE_BROWSER=1`.*
 3. **Données structurées + liens d'offres** (`scraper/structured.py`, `scraper/parsers/generic.py`) —
    `JobPosting` en JSON-LD, Microdata, RDFa/Microformats (RDFa/Microformats via `extruct` si installé),
-   plus les liens de la page qui ressemblent à des offres.
+   plus les liens de la page qui ressemblent à des offres. Si la page ne liste aucune offre, les pages
+   d'offres sont **découvertes par le sitemap ou le flux RSS/Atom** (`scraper/sitemap.py` : `Sitemap:`
+   du `robots.txt`, index de sitemaps, `urlset`, RSS/Atom), lues et dépouillées de leur `JobPosting`.
 4. **LLM sur le texte de la page** (`scraper/llm_extract.py`) — dernier recours, **stub désactivé par
    défaut** (`SCRAPER_LLM`).
 

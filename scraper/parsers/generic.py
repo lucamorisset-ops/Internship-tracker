@@ -27,7 +27,7 @@ from bs4 import BeautifulSoup, Tag
 
 from ..llm_extract import maybe_llm_offers
 from ..models import Offer, SourceResult, fold, slugify, url_key
-from ..structured import extra_structured_jobpostings
+from ..structured import extra_structured_jobpostings, structured_jobpostings
 from .base import BaseParser, clean_text, iso_to_date, jsonld_jobpostings, parse_date
 
 REASON = ("Lecture générique : le robot repère les liens qui ressemblent à des offres. "
@@ -254,11 +254,37 @@ class Parser(BaseParser):
             for off in self.extract_offers(source, r.url or u, r.text):
                 _merge_into(found, off)
         res.offers = list(found.values())[:MAX_OFFERS]
+        if not res.offers:
+            self._read_sitemap_offers(source, official[0], found, res)   # (§5) sitemap/RSS offer pages
+            res.offers = list(found.values())[:MAX_OFFERS]
         if not res.offers and last_html:
             self._llm_last_resort(source, last_html, found)   # (d) step 5, stub -> no-op by default
             res.offers = list(found.values())[:MAX_OFFERS]
         self.finish(res)
         return res
+
+    def _read_sitemap_offers(self, source: dict, base_url: str, found: dict[str, Offer],
+                             res: SourceResult, limit: int = 12) -> None:
+        """When the careers page lists no offer, find offer pages via the sitemap / feed and
+        read their structured data (JSON-LD JobPosting). Bounded and best-effort."""
+        from ..sitemap import collect_offer_pages   # lazy: avoids a generic <-> sitemap import cycle
+        try:
+            urls = collect_offer_pages(self.ctx.fetcher, base_url, limit=limit)
+        except Exception:  # noqa: BLE001 - discovery must never break the read
+            return
+        for u in urls:
+            try:
+                r = self.get(u, res)
+            except Exception:  # noqa: BLE001 - one bad offer page must not stop the others
+                continue
+            for jp in structured_jobpostings(r.text, r.url or u):
+                off = self.offer(
+                    source, ext_id=ext_id_for(jp.get("url") or u), title=jp["title"],
+                    url=jp.get("url") or u, location=jp.get("location", ""),
+                    contract=jp.get("contract", ""), published=jp.get("published"),
+                    description=(jp.get("description") or "")[:4000],
+                    extra={"structured": jp.get("syntax"), "via": "sitemap"})
+                _merge_into(found, off, from_jsonld=True)
 
     def _llm_last_resort(self, source: dict, html: str, found: dict[str, Offer]) -> None:
         """Last resort when nothing else matched: an LLM reads the page text (stub, off by default)."""
