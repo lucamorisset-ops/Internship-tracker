@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from .http import Fetcher, RobotsDisallowed, FetchError, USER_AGENT, looks_like_challenge
+from .http import Fetcher, RobotsDisallowed, FetchError, looks_like_challenge
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class Browser:
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch()
         self._context = self._browser.new_context(
-            user_agent=USER_AGENT, locale="fr-FR", java_script_enabled=True
+            user_agent=self.fetcher.user_agent, locale="fr-FR", java_script_enabled=True
         )
 
     def render(self, url: str, *, wait_for: str | None = None, timeout_ms: int = 30000,
