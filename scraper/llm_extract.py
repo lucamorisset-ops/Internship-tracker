@@ -16,7 +16,7 @@ rester un stub") without adding a dependency or a hidden cost.
 from __future__ import annotations
 
 import os
-from typing import Any, Callable
+from typing import Callable
 
 # the common, schema.org JobPosting-aligned shape every extraction method returns
 OFFER_FIELDS = ("title", "url", "location", "contract", "published", "description", "ext_id")
