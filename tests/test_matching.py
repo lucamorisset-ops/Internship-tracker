@@ -125,3 +125,16 @@ def test_keyword_variants_helper():
     assert "equities" in keyword_variants("actions")
     assert "credit" in keyword_variants("credit")
     assert keyword_variants("") == []
+
+
+def test_classify_uses_global_defaults():
+    """Global default criteria (meta.default_criteria) widen the search for sources without
+    their own criteria: 'Private equity' as a default type makes a PE internship a target."""
+    o = classify(mk("Stage Analyste Private Equity"), None, today=TODAY, defaults={"types": ["Private equity"]})
+    assert o.relevance == "cible"
+    o2 = classify(mk("Stage Analyste Private Equity"), None, today=TODAY)
+    assert o2.relevance == "proche"            # PE is only a neighbouring métier by default
+    # a source's own criteria still take precedence over the global defaults
+    o3 = classify(mk("Stage Analyste Private Equity"), {"types": ["Equity research"]}, today=TODAY,
+                  defaults={"types": ["Private equity"]})
+    assert o3.relevance == "proche"

@@ -266,3 +266,32 @@ def test_no_new_offer_is_ever_missed_across_passes(tmp_path, monkeypatch):
     run(store, Notifier(None, dry_run=True), today=date(2026, 11, 11), **kw)
     offers = {o["id"]: o for o in store.db["offers"]}
     assert offers["acme:A"]["closed"] is True and offers["acme:B"]["closed"] is False
+
+
+def test_criteria_change_reclassifies_existing_offers(tmp_path, monkeypatch):
+    """« Suivre ce métier » : a keyword added to a source re-sorts its OPEN offers at the next
+    pass (not only future ones), even when the matching rules (version) did not change."""
+    from scraper.matching import MATCHING_VERSION
+    _install(monkeypatch)
+    store = _store(tmp_path)
+    store.db["offers"] = [
+        {"id": "acme:1", "source_id": "acme", "title": "Stage Analyste Quantitatif H/F",
+         "url": "https://x.test/o/1", "url_key": "https://x.test/o/1", "location": "Paris", "contract": "Stage",
+         "closed": False, "manual": False, "relevance": "proche", "reasons": "métier voisin · Paris",
+         "start_label": "Non précisé"},
+    ]
+    store.set_meta("matching_version", MATCHING_VERSION)        # rules unchanged -> global re-tri is skipped
+    store.save()
+    # user adds the keyword to the company's criteria
+    store.db["sources"][0]["criteria"] = {"keywords": "quantitatif"}
+    STATE["offers"] = [("1", "Stage Analyste Quantitatif H/F")]
+    notif = Notifier(None, dry_run=True)
+    run(store, notif, use_browser=False, fetcher=FakeFetcher({}), today=date(2026, 11, 9), only=["acme"])
+    offers = {o["id"]: o for o in store.db["offers"]}
+    assert offers["acme:1"]["relevance"] == "cible"            # moved up by the per-source re-sort
+    assert any("remontée" in m["title"] for m in notif.sent)
+
+    # second pass, nothing changed -> no re-sort, no repeat notification
+    notif2 = Notifier(None, dry_run=True)
+    run(store, notif2, use_browser=False, fetcher=FakeFetcher({}), today=date(2026, 11, 9), only=["acme"])
+    assert not any("remontée" in m["title"] for m in notif2.sent)

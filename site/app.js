@@ -133,11 +133,12 @@ function explain(e) {
 }
 
 /* ------------------------------------------------------------ état */
-const state = { sources: [], offers: [], runs: [], lastRun: null, inventorySince: null, pending: [], loaded: false };
+const state = { sources: [], offers: [], runs: [], lastRun: null, inventorySince: null, defaultCriteria: null, pending: [], loaded: false };
 const ui = {
   tab: "offres", filter: recall("filter") || "cible", sort: recall("sort") || "rank",
   showClosed: recall("closed") === "1", q: "", confirmDelete: null, srcMsg: {}, runMsg: null, flash: null,
   srcFilter: recall("srcfilter") || "all", promote: null,
+  fCompany: recall("fcompany") || "", fCity: recall("fcity") || "", fStart: recall("fstart") || "",
 };
 if (!["all", "new"].includes(ui.srcFilter)) ui.srcFilter = "all";
 if (!["cible", "proche", "todo", "all"].includes(ui.filter)) ui.filter = "cible";
@@ -259,11 +260,27 @@ function inFilter(o, f) {
   if (f === "todo") return (o.status || "nouvelle") === "nouvelle" && (o.relevance !== "exclue" || isNewHors(o));
   return true;
 }
+/* Ville grossière pour le filtre, alignée sur les villes du tracker (Paris, Londres). */
+const PARIS_RE = /paris|ile[- ]de[- ]france|\bidf\b|la defense|puteaux|courbevoie|neuilly|boulogne|levallois|issy|montrouge|nanterre|saint[- ]denis|charenton|clichy|\((?:75|92|93|94)\)|\b(?:75|92|93|94)\d{3}\b/;
+const LONDON_RE = /london|londres/;
+function cityOf(o) {
+  const loc = fold((o.location || "") + " " + (o.country || ""));
+  if (!loc.trim()) return "Non précisé";
+  if (PARIS_RE.test(loc)) return "Paris";
+  if (LONDON_RE.test(loc)) return "Londres";
+  return "Autre";
+}
+function matchesCritFilters(o, map) {
+  if (ui.fCompany && companyOf(o, map) !== ui.fCompany) return false;
+  if (ui.fCity && cityOf(o) !== ui.fCity) return false;
+  if (ui.fStart && (o.start_label || "Non précisé") !== ui.fStart) return false;
+  return true;
+}
 function baseVisible(o, map) {
   if (o.closed && !ui.showClosed) return false;
   const q = fold(ui.q.trim());
   if (q && !fold((o.title || "") + " " + companyOf(o, map)).includes(q)) return false;
-  return true;
+  return matchesCritFilters(o, map);
 }
 const REL_ORDER = { cible: 0, proche: 1, exclue: 2 };
 function sortOffers(list, map) {
@@ -302,8 +319,31 @@ function renderFilterButtons(base) {
     b.querySelector(".n").textContent = state.loaded ? String(base.filter((o) => inFilter(o, f)).length) : "";
   });
 }
+function fillSelect(sel, values, current, allLabel) {
+  if (!sel) return;
+  sel.textContent = "";
+  const opt0 = el("option", null, allLabel); opt0.value = ""; sel.appendChild(opt0);
+  values.forEach((v) => { const o = el("option", null, v); o.value = v; sel.appendChild(o); });
+  sel.value = values.includes(current) ? current : "";   // ui is authoritative; "" = tous
+}
+function renderOfferFilters(map) {
+  // options from all non-closed offers (so a filter never hides its own value)
+  const pool = state.offers.filter((o) => !o.closed || ui.showClosed);
+  const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
+  fillSelect($("f-company"), uniq(pool.map((o) => companyOf(o, map))).sort((a, b) => a.localeCompare(b)), ui.fCompany, "Toutes");
+  const cityOrder = { "Paris": 0, "Londres": 1, "Autre": 2, "Non précisé": 3 };
+  fillSelect($("f-city"), uniq(pool.map(cityOf)).sort((a, b) => (cityOrder[a] ?? 9) - (cityOrder[b] ?? 9)), ui.fCity, "Tous");
+  fillSelect($("f-start"), uniq(pool.map((o) => o.start_label || "Non précisé")).sort((a, b) => a.localeCompare(b)), ui.fStart, "Tous");
+  // keep ui in sync if a stored value is no longer available
+  ui.fCompany = $("f-company") ? $("f-company").value : ui.fCompany;
+  ui.fCity = $("f-city") ? $("f-city").value : ui.fCity;
+  ui.fStart = $("f-start") ? $("f-start").value : ui.fStart;
+  const reset = $("f-reset");
+  if (reset) reset.hidden = !(ui.fCompany || ui.fCity || ui.fStart);
+}
 function renderOffers() {
   const map = sourceById();
+  renderOfferFilters(map);
   renderFilterButtons(state.offers.filter((o) => baseVisible(o, map)));
   guarded("offer-list", buildOffers);
 }
@@ -449,7 +489,10 @@ async function doPromote(o, value) {
     src.criteria = newCriteria;
     ui.promote = null;
     delete ui.srcMsg[key];
-    flashes.set(o.id, { text: "Mot-clé ajouté : les prochaines offres de ce type seront ciblées.", cls: "ok", at: Date.now() });
+    // ask the robot to re-read this company soon: it re-sorts its existing offers with the new criteria
+    let extra = "";
+    try { await api.requestRun([o.source_id]); } catch { extra = " (le reclassement aura lieu au prochain passage)"; }
+    flashes.set(o.id, { text: "Mot-clé ajouté : les offres de ce type seront reclassées « ciblées »" + extra + ".", cls: "ok", at: Date.now() });
     renderAll();
     refresh();
   } catch (e) {
@@ -550,16 +593,30 @@ function hasCustomCriteria(cr) {
     return Array.isArray(v) ? v.length : v != null && v !== "";
   });
 }
+// Critères par défaut effectifs : ceux édités depuis le site (meta.default_criteria) par-dessus
+// les critères de base du code. Sert de base aux entreprises sans critères propres.
+function globalDefaults() {
+  const g = state.defaultCriteria && typeof state.defaultCriteria === "object" ? state.defaultCriteria : {};
+  const pick = (k) => { const v = g[k]; return Array.isArray(v) ? (v.length ? v : null) : (v != null && v !== "" ? v : null); };
+  let cities = pick("cities") || DEFAULT_CRITERIA.cities;
+  return {
+    types: pick("types") || DEFAULT_CRITERIA.types,
+    starts: pick("starts") || DEFAULT_CRITERIA.starts,
+    cities: Array.isArray(cities) ? cities : cities,
+    keywords: pick("keywords") || DEFAULT_CRITERIA.keywords,
+  };
+}
 function effectiveCriteria(cr) {
+  const base = globalDefaults();
   const c = cr && typeof cr === "object" ? cr : {};
   const pick = (k) => { const v = c[k]; return Array.isArray(v) ? v : (v != null && v !== "" ? v : null); };
-  let cities = pick("cities") || DEFAULT_CRITERIA.cities;
+  let cities = pick("cities") || base.cities;
   if (Array.isArray(cities)) cities = cities.join(", ");
   return {
-    types: (pick("types") && pick("types").length ? pick("types") : DEFAULT_CRITERIA.types),
-    starts: (pick("starts") && pick("starts").length ? pick("starts") : DEFAULT_CRITERIA.starts),
+    types: (pick("types") && pick("types").length ? pick("types") : base.types),
+    starts: (pick("starts") && pick("starts").length ? pick("starts") : base.starts),
     cities,
-    keywords: pick("keywords") || "",
+    keywords: pick("keywords") || base.keywords || "",
   };
 }
 function criteriaText(cr) {
@@ -909,6 +966,49 @@ function checkLabel(name, value, on) {
   l.append(i, document.createTextNode(value));
   return l;
 }
+
+/* ------------------------------------------------------------ critères globaux (meta.default_criteria) */
+function buildDefCritForm() {
+  const tbox = $("dc-types"), sbox = $("dc-starts"), form = $("defcrit-form");
+  if (!tbox || !sbox || !form) return;
+  TYPES.forEach((t) => tbox.appendChild(checkLabel("dc-type", t, false)));
+  STARTS.forEach((s) => sbox.appendChild(checkLabel("dc-start", s, false)));
+  form.addEventListener("submit", onSaveDefCrit);
+}
+function renderDefCrit() {
+  const box = $("defcrit");
+  if (!box || !state.loaded) return;
+  if (document.activeElement && box.contains(document.activeElement)
+      && document.activeElement.matches("input")) return;        // ne pas écraser pendant la saisie
+  const g = globalDefaults();
+  const typeSet = new Set(g.types), startSet = new Set(g.starts);
+  document.querySelectorAll('#dc-types input[name="dc-type"]').forEach((i) => { i.checked = typeSet.has(i.value); });
+  document.querySelectorAll('#dc-starts input[name="dc-start"]').forEach((i) => { i.checked = startSet.has(i.value); });
+  const city = $("dc-city"), kw = $("dc-kw");
+  if (city) city.value = Array.isArray(g.cities) ? g.cities.join(", ") : (g.cities || "");
+  if (kw) kw.value = g.keywords || "";
+}
+async function onSaveDefCrit(ev) {
+  ev.preventDefault();
+  const msg = $("dc-msg"), btn = $("dc-save");
+  const types = checkedValues("dc-type"), starts = checkedValues("dc-start");
+  if (!types.length) { setMsg(msg, "Coche au moins un type de stage.", "err"); return; }
+  if (!starts.length) { setMsg(msg, "Coche au moins un mois de démarrage.", "err"); return; }
+  const crit = { types, starts, cities: $("dc-city").value.trim(), keywords: $("dc-kw").value.trim() };
+  btn.disabled = true;
+  setMsg(msg, "Enregistrement…");
+  try {
+    await api.setMeta("default_criteria", crit);
+    state.defaultCriteria = crit;
+    let tail = "";
+    try { await api.requestRun(null); } catch { tail = " (au prochain passage automatique)"; }
+    setMsg(msg, "Critères enregistrés : le robot reclasse les offres" + tail + ".", "ok");
+    renderAll();
+  } catch (e) {
+    setMsg(msg, "Non enregistré : " + explain(e) + ".", "err");
+  }
+  btn.disabled = false;
+}
 const checkedValues = (name) => Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map((x) => x.value);
 async function onAdd(ev) {
   ev.preventDefault();
@@ -976,6 +1076,7 @@ function renderAll() {
   renderCounts();
   renderOffers();
   renderSources();
+  renderDefCrit();
   renderBlocks();
   renderRun();
 }
@@ -1050,11 +1151,16 @@ function makeSupabaseApi(client) {
         client.from("sources").select("*").order("rank", { ascending: true, nullsFirst: false }).then(check),
         allOffers(),
         client.from("runs").select("*").order("id", { ascending: false }).limit(10).then(check),
-        client.from("meta").select("key,value").in("key", ["last_run", "inventory_since"]).then(check),
+        client.from("meta").select("key,value").in("key", ["last_run", "inventory_since", "default_criteria"]).then(check),
         client.from("run_requests").select("id,requested_at,sources").is("done_at", null).order("requested_at").then(check),
       ]);
       const mv = (k) => { const r = meta.find((x) => x.key === k); return r ? r.value : null; };
-      return { sources, offers, runs, lastRun: mv("last_run"), inventorySince: mv("inventory_since"), pending };
+      return { sources, offers, runs, lastRun: mv("last_run"), inventorySince: mv("inventory_since"),
+               defaultCriteria: mv("default_criteria"), pending };
+    },
+    async setMeta(key, value) {
+      const upd = check(await client.from("meta").update({ value }).eq("key", key).select("key"));
+      if (!upd || !upd.length) check(await client.from("meta").insert({ key, value }));
     },
     async updateOffer(id, fields) { one(check(await client.from("offers").update(fields).eq("id", id).select("id"))); },
     async insertSource(row) { check(await client.from("sources").insert(row)); },
@@ -1162,6 +1268,17 @@ function bindStatic() {
   document.querySelectorAll("#src-filters button").forEach((b) => b.addEventListener("click", () => {
     ui.srcFilter = b.dataset.sf; store("srcfilter", ui.srcFilter); renderSources();
   }));
+  const bindCrit = (id, key) => {
+    const s = $(id);
+    if (s) s.addEventListener("change", () => { ui[key] = s.value; store(key.toLowerCase(), s.value); dirty.delete("offer-list"); renderOffers(); });
+  };
+  bindCrit("f-company", "fCompany"); bindCrit("f-city", "fCity"); bindCrit("f-start", "fStart");
+  const fr = $("f-reset");
+  if (fr) fr.addEventListener("click", () => {
+    ui.fCompany = ui.fCity = ui.fStart = "";
+    ["fcompany", "fcity", "fstart"].forEach((k) => store(k, ""));
+    dirty.delete("offer-list"); renderOffers();
+  });
   const sc = $("show-closed");
   sc.checked = ui.showClosed;
   sc.addEventListener("change", () => { ui.showClosed = sc.checked; store("closed", sc.checked ? "1" : "0"); renderOffers(); });
@@ -1175,6 +1292,7 @@ function bindStatic() {
   watchFocus("offer-list", buildOffers);
   watchFocus("source-list", buildSources);
   buildForm();
+  buildDefCritForm();
   bindLogin();
 }
 
@@ -1247,9 +1365,11 @@ function makeDemoApi(failWrites) {
       return clone({
         sources: db.sources.slice().sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999)),
         offers: db.offers, runs: db.runs, lastRun: db.meta.last_run, inventorySince: db.meta.inventory_since || null,
+        defaultCriteria: db.meta.default_criteria || null,
         pending: db.run_requests.filter((r) => !r.done_at),
       });
     },
+    async setMeta(key, value) { await fail(); db.meta[key] = clone(value); },
     async updateOffer(id, fields) {
       await fail();
       const o = db.offers.find((x) => x.id === id);

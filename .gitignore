@@ -8,3 +8,6 @@ setup.sql
 .env
 http_cache.sqlite
 *.sqlite
+node_modules/
+package.json
+package-lock.json

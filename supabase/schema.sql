@@ -123,6 +123,13 @@ drop policy if exists "lecture demandes" on public.run_requests;
 create policy "lecture demandes" on public.run_requests for select to authenticated using (public.is_allowed());
 drop policy if exists "lecture meta" on public.meta;
 create policy "lecture meta" on public.meta for select to authenticated using (public.is_allowed());
+-- le site peut modifier uniquement la ligne des critères par défaut (meta.default_criteria)
+drop policy if exists "ajout criteres" on public.meta;
+create policy "ajout criteres" on public.meta for insert to authenticated
+  with check (public.is_allowed() and key = 'default_criteria');
+drop policy if exists "modif criteres" on public.meta;
+create policy "modif criteres" on public.meta for update to authenticated
+  using (public.is_allowed() and key = 'default_criteria') with check (key = 'default_criteria');
 
 -- écriture depuis le site : ajouter / régler une entreprise, suivre une offre, demander un passage
 drop policy if exists "ajout entreprise" on public.sources;
@@ -149,5 +156,7 @@ grant insert (id, company, rank, kind, params, catalog_url, read_urls, filters, 
 grant update (company, rank, catalog_url, criteria, note, enabled, status, priority_url) on public.sources to authenticated;
 revoke insert, update, delete on public.runs, public.meta from authenticated;
 grant select on public.runs, public.meta to authenticated;
+-- critères par défaut éditables depuis le site (RLS ci-dessus limite à la clé default_criteria)
+grant insert (key, value), update (value) on public.meta to authenticated;
 revoke insert, update, delete on public.run_requests from authenticated;
 grant select, insert (sources) on public.run_requests to authenticated;

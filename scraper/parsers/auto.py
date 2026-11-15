@@ -448,8 +448,8 @@ class Parser(BaseParser):
         if not discover.browser_enabled() or self.ctx.browser is None:
             return None
         try:
-            candidates, cookies, _html = discover.sniff_job_endpoints(
-                url, self.ctx.fetcher.user_agent, allowed=self.ctx.fetcher.allowed)
+            # reuse the runner's browser (never start a second Playwright)
+            candidates, cookies, _html = self.ctx.browser.sniff_endpoints(url)
         except Exception as e:  # noqa: BLE001 - discovery is best-effort, never breaks the pass
             log.info("  découverte d'endpoint impossible (%s)", e)
             return None
