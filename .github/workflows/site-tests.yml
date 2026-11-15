@@ -1,0 +1,25 @@
+name: Tests du site
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**"]
+  pull_request:
+    paths: ["site/**"]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Playwright
+        run: |
+          npm install playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - name: Test de fumée du site (mode démo)
+        run: node site/tests/smoke.cjs
