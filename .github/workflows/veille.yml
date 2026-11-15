@@ -27,6 +27,13 @@ env:
   SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
   NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
   SITE_URL: ${{ vars.SITE_URL || 'https://lucamorisset-ops.github.io/Internship-tracker/' }}
+  # Options du moteur de collecte (à régler dans Settings > Variables, vides = comportement par défaut) :
+  #   SCRAPER_CONTACT   : adresse de contact ajoutée au User-Agent (bon citoyen)
+  #   ENABLE_BROWSER    : "1" pour autoriser la découverte d'endpoints JSON par navigateur
+  #   SCRAPER_CACHE_TTL : durée du cache HTTP en secondes (ex. 21600 = 6 h)
+  SCRAPER_CONTACT: ${{ vars.SCRAPER_CONTACT }}
+  ENABLE_BROWSER: ${{ vars.ENABLE_BROWSER }}
+  SCRAPER_CACHE_TTL: ${{ vars.SCRAPER_CACHE_TTL }}
   PYTHONUNBUFFERED: "1"
 
 jobs:

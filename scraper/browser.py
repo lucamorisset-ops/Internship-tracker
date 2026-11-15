@@ -81,6 +81,53 @@ class Browser:
         finally:
             page.close()
 
+    def sniff_endpoints(self, url: str, *, max_actions: int = 6, timeout_ms: int = 45000):
+        """Open url, capture JSON responses and return (candidates, cookies, html).
+
+        Reuses this browser's single Playwright context (never starts a second one),
+        obeys robots.txt and the per-host delay, and aborts requests robots.txt forbids.
+        """
+        from . import discover
+
+        if not self.fetcher.allowed(url):
+            self.fetcher.log.append({"url": url, "status": "robots"})
+            raise RobotsDisallowed(url, unreachable=self.fetcher.robots_unreachable(url))
+        self._start()
+        host = self.fetcher._host(url)
+        self.fetcher._wait(host, self.fetcher._crawl_delay(url))
+        candidates: list = []
+        page = self._context.new_page()
+        blocked: list[str] = []
+        page.route("**/*", self._robots_guard(page, host, blocked))
+
+        def on_response(resp) -> None:
+            if "json" not in (resp.headers.get("content-type") or "").lower():
+                return
+            try:
+                body = resp.json()
+            except Exception:  # noqa: BLE001
+                return
+            req = resp.request
+            candidates.extend(discover.best_candidates(body, {
+                "method": req.method, "url": resp.url, "post_data": req.post_data,
+                "headers": dict(req.headers)}))
+
+        page.on("response", on_response)
+        try:
+            page.goto(url, timeout=timeout_ms, wait_until="networkidle")
+            page.mouse.wheel(0, 4000)
+            page.wait_for_timeout(1500)
+            discover._explore(page, candidates, max_actions, timeout_ms)
+            cookies = self._context.cookies()
+            html = page.content()
+            self.fetcher.log.append({"url": url, "status": 200, "via": "navigateur"})
+        finally:
+            page.close()
+        best: dict = {}
+        for c in sorted(candidates, key=lambda c: -c.score):
+            best.setdefault((c.method, c.url.split("?")[0], c.json_path), c)
+        return list(best.values()), cookies, html
+
     def _robots_guard(self, page, host: str, blocked: list[str]) -> Callable:
         """Route handler: neither a navigation of the page (JavaScript redirect...) nor a request
         to the site itself (data loaded by its scripts) goes to a URL that robots.txt forbids;
@@ -128,6 +175,11 @@ class LazyBrowser:
         if self._b is None:
             self._b = self._factory(self._fetcher)
         return self._b.render(*a, **kw)
+
+    def sniff_endpoints(self, *a, **kw):
+        if self._b is None:
+            self._b = self._factory(self._fetcher)
+        return self._b.sniff_endpoints(*a, **kw)
 
     def close(self) -> None:
         if self._b:
