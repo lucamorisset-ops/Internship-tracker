@@ -182,6 +182,9 @@ ul.urls li{min-width:0}
 details summary{cursor:pointer;color:var(--muted);font-size:.84rem}
 details ul{margin:6px 0 0;padding-left:18px;display:grid;gap:2px}
 pre.err{margin:6px 0 0;white-space:pre-wrap;word-break:break-word;font-family:var(--f-mono);font-size:.76rem;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px;color:var(--fg);max-height:16em;overflow:auto}
+.defcrit{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px}
+.defcrit>summary{font-weight:600;color:var(--fg)}
+.defcrit .addform{border:0;padding:12px 0 2px;background:none}
 .prio{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .prio input{font:inherit;font-size:.85rem;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);min-width:0;flex:1 1 260px}
 .src-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;border-top:1px solid var(--line);padding-top:10px}
@@ -359,6 +362,30 @@ fieldset.field{border:0;margin:0;padding:0;min-width:0}
         <h2>Sources et catalogues</h2>
         <span class="foot">« Ouvrir le catalogue » ouvre la liste officielle avec les filtres que le robot utilise.</span>
       </div>
+      <details class="defcrit" id="defcrit">
+        <summary>Mes critères par défaut</summary>
+        <form class="addform" id="defcrit-form" novalidate>
+          <p class="hint">Ces critères s'appliquent à toutes les entreprises qui n'ont pas de critères propres. Le robot reclasse les offres au prochain passage.</p>
+          <div class="fields">
+            <fieldset class="field"><legend>Type de stage</legend><div class="checks" id="dc-types"></div></fieldset>
+            <fieldset class="field"><legend>Démarrage</legend><div class="checks" id="dc-starts"></div></fieldset>
+            <div class="field">
+              <label for="dc-city">Villes</label>
+              <input type="text" id="dc-city" autocomplete="off">
+              <span class="hint">Séparées par des virgules.</span>
+            </div>
+            <div class="field">
+              <label for="dc-kw">Mots-clés</label>
+              <input type="text" id="dc-kw" placeholder="ex. M&amp;A, private equity" autocomplete="off">
+              <span class="hint">Séparés par des virgules.</span>
+            </div>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn" id="dc-save">Enregistrer les critères</button>
+            <span class="msg" id="dc-msg" role="status"></span>
+          </div>
+        </form>
+      </details>
       <div class="filters" id="src-filters" role="group" aria-label="Filtrer les entreprises">
         <button type="button" data-sf="all" aria-pressed="true">Toutes<span class="n"></span></button>
         <button type="button" data-sf="new" aria-pressed="false">Nouvellement ajoutées<span class="n"></span></button>

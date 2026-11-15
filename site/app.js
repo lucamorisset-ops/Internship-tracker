@@ -133,7 +133,7 @@ function explain(e) {
 }
 
 /* ------------------------------------------------------------ état */
-const state = { sources: [], offers: [], runs: [], lastRun: null, inventorySince: null, pending: [], loaded: false };
+const state = { sources: [], offers: [], runs: [], lastRun: null, inventorySince: null, defaultCriteria: null, pending: [], loaded: false };
 const ui = {
   tab: "offres", filter: recall("filter") || "cible", sort: recall("sort") || "rank",
   showClosed: recall("closed") === "1", q: "", confirmDelete: null, srcMsg: {}, runMsg: null, flash: null,
@@ -593,16 +593,30 @@ function hasCustomCriteria(cr) {
     return Array.isArray(v) ? v.length : v != null && v !== "";
   });
 }
+// Critères par défaut effectifs : ceux édités depuis le site (meta.default_criteria) par-dessus
+// les critères de base du code. Sert de base aux entreprises sans critères propres.
+function globalDefaults() {
+  const g = state.defaultCriteria && typeof state.defaultCriteria === "object" ? state.defaultCriteria : {};
+  const pick = (k) => { const v = g[k]; return Array.isArray(v) ? (v.length ? v : null) : (v != null && v !== "" ? v : null); };
+  let cities = pick("cities") || DEFAULT_CRITERIA.cities;
+  return {
+    types: pick("types") || DEFAULT_CRITERIA.types,
+    starts: pick("starts") || DEFAULT_CRITERIA.starts,
+    cities: Array.isArray(cities) ? cities : cities,
+    keywords: pick("keywords") || DEFAULT_CRITERIA.keywords,
+  };
+}
 function effectiveCriteria(cr) {
+  const base = globalDefaults();
   const c = cr && typeof cr === "object" ? cr : {};
   const pick = (k) => { const v = c[k]; return Array.isArray(v) ? v : (v != null && v !== "" ? v : null); };
-  let cities = pick("cities") || DEFAULT_CRITERIA.cities;
+  let cities = pick("cities") || base.cities;
   if (Array.isArray(cities)) cities = cities.join(", ");
   return {
-    types: (pick("types") && pick("types").length ? pick("types") : DEFAULT_CRITERIA.types),
-    starts: (pick("starts") && pick("starts").length ? pick("starts") : DEFAULT_CRITERIA.starts),
+    types: (pick("types") && pick("types").length ? pick("types") : base.types),
+    starts: (pick("starts") && pick("starts").length ? pick("starts") : base.starts),
     cities,
-    keywords: pick("keywords") || "",
+    keywords: pick("keywords") || base.keywords || "",
   };
 }
 function criteriaText(cr) {
@@ -952,6 +966,49 @@ function checkLabel(name, value, on) {
   l.append(i, document.createTextNode(value));
   return l;
 }
+
+/* ------------------------------------------------------------ critères globaux (meta.default_criteria) */
+function buildDefCritForm() {
+  const tbox = $("dc-types"), sbox = $("dc-starts"), form = $("defcrit-form");
+  if (!tbox || !sbox || !form) return;
+  TYPES.forEach((t) => tbox.appendChild(checkLabel("dc-type", t, false)));
+  STARTS.forEach((s) => sbox.appendChild(checkLabel("dc-start", s, false)));
+  form.addEventListener("submit", onSaveDefCrit);
+}
+function renderDefCrit() {
+  const box = $("defcrit");
+  if (!box || !state.loaded) return;
+  if (document.activeElement && box.contains(document.activeElement)
+      && document.activeElement.matches("input")) return;        // ne pas écraser pendant la saisie
+  const g = globalDefaults();
+  const typeSet = new Set(g.types), startSet = new Set(g.starts);
+  document.querySelectorAll('#dc-types input[name="dc-type"]').forEach((i) => { i.checked = typeSet.has(i.value); });
+  document.querySelectorAll('#dc-starts input[name="dc-start"]').forEach((i) => { i.checked = startSet.has(i.value); });
+  const city = $("dc-city"), kw = $("dc-kw");
+  if (city) city.value = Array.isArray(g.cities) ? g.cities.join(", ") : (g.cities || "");
+  if (kw) kw.value = g.keywords || "";
+}
+async function onSaveDefCrit(ev) {
+  ev.preventDefault();
+  const msg = $("dc-msg"), btn = $("dc-save");
+  const types = checkedValues("dc-type"), starts = checkedValues("dc-start");
+  if (!types.length) { setMsg(msg, "Coche au moins un type de stage.", "err"); return; }
+  if (!starts.length) { setMsg(msg, "Coche au moins un mois de démarrage.", "err"); return; }
+  const crit = { types, starts, cities: $("dc-city").value.trim(), keywords: $("dc-kw").value.trim() };
+  btn.disabled = true;
+  setMsg(msg, "Enregistrement…");
+  try {
+    await api.setMeta("default_criteria", crit);
+    state.defaultCriteria = crit;
+    let tail = "";
+    try { await api.requestRun(null); } catch { tail = " (au prochain passage automatique)"; }
+    setMsg(msg, "Critères enregistrés : le robot reclasse les offres" + tail + ".", "ok");
+    renderAll();
+  } catch (e) {
+    setMsg(msg, "Non enregistré : " + explain(e) + ".", "err");
+  }
+  btn.disabled = false;
+}
 const checkedValues = (name) => Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map((x) => x.value);
 async function onAdd(ev) {
   ev.preventDefault();
@@ -1019,6 +1076,7 @@ function renderAll() {
   renderCounts();
   renderOffers();
   renderSources();
+  renderDefCrit();
   renderBlocks();
   renderRun();
 }
@@ -1093,11 +1151,16 @@ function makeSupabaseApi(client) {
         client.from("sources").select("*").order("rank", { ascending: true, nullsFirst: false }).then(check),
         allOffers(),
         client.from("runs").select("*").order("id", { ascending: false }).limit(10).then(check),
-        client.from("meta").select("key,value").in("key", ["last_run", "inventory_since"]).then(check),
+        client.from("meta").select("key,value").in("key", ["last_run", "inventory_since", "default_criteria"]).then(check),
         client.from("run_requests").select("id,requested_at,sources").is("done_at", null).order("requested_at").then(check),
       ]);
       const mv = (k) => { const r = meta.find((x) => x.key === k); return r ? r.value : null; };
-      return { sources, offers, runs, lastRun: mv("last_run"), inventorySince: mv("inventory_since"), pending };
+      return { sources, offers, runs, lastRun: mv("last_run"), inventorySince: mv("inventory_since"),
+               defaultCriteria: mv("default_criteria"), pending };
+    },
+    async setMeta(key, value) {
+      const upd = check(await client.from("meta").update({ value }).eq("key", key).select("key"));
+      if (!upd || !upd.length) check(await client.from("meta").insert({ key, value }));
     },
     async updateOffer(id, fields) { one(check(await client.from("offers").update(fields).eq("id", id).select("id"))); },
     async insertSource(row) { check(await client.from("sources").insert(row)); },
@@ -1229,6 +1292,7 @@ function bindStatic() {
   watchFocus("offer-list", buildOffers);
   watchFocus("source-list", buildSources);
   buildForm();
+  buildDefCritForm();
   bindLogin();
 }
 
@@ -1301,9 +1365,11 @@ function makeDemoApi(failWrites) {
       return clone({
         sources: db.sources.slice().sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999)),
         offers: db.offers, runs: db.runs, lastRun: db.meta.last_run, inventorySince: db.meta.inventory_since || null,
+        defaultCriteria: db.meta.default_criteria || null,
         pending: db.run_requests.filter((r) => !r.done_at),
       });
     },
+    async setMeta(key, value) { await fail(); db.meta[key] = clone(value); },
     async updateOffer(id, fields) {
       await fail();
       const o = db.offers.find((x) => x.id === id);
