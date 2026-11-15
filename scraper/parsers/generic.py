@@ -26,6 +26,7 @@ from urllib.parse import parse_qsl, urljoin, urlsplit
 from bs4 import BeautifulSoup, Tag
 
 from ..models import Offer, SourceResult, fold, slugify, url_key
+from ..structured import extra_structured_jobpostings
 from .base import BaseParser, clean_text, iso_to_date, jsonld_jobpostings, parse_date
 
 REASON = ("Lecture générique : le robot repère les liens qui ressemblent à des offres. "
@@ -320,6 +321,18 @@ class Parser(BaseParser):
                 published=iso_to_date(j.get("datePosted")),
                 description=clean_text(j.get("description") or "")[:4000],
                 extra={"jsonld": True},
+            )
+            _merge_into(found, off, from_jsonld=True)
+
+        # Microdata + (optional) RDFa/Microformats: structured data in syntaxes other than
+        # JSON-LD, so a page that marks up its offers that way is read too.
+        for jp in extra_structured_jobpostings(html, base):
+            u = jp.get("url") or page_url
+            off = self.offer(
+                source, ext_id=ext_id_for(u), title=jp["title"], url=u,
+                location=jp.get("location", ""), contract=jp.get("contract", ""),
+                published=jp.get("published"), description=(jp.get("description") or "")[:4000],
+                extra={"structured": jp.get("syntax")},
             )
             _merge_into(found, off, from_jsonld=True)
         return list(found.values())
