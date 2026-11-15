@@ -25,6 +25,7 @@ from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from bs4 import BeautifulSoup, Tag
 
+from ..llm_extract import maybe_llm_offers
 from ..models import Offer, SourceResult, fold, slugify, url_key
 from ..structured import extra_structured_jobpostings
 from .base import BaseParser, clean_text, iso_to_date, jsonld_jobpostings, parse_date
@@ -246,13 +247,34 @@ class Parser(BaseParser):
             res.status, res.reason, res.fix = "a_configurer", INTERMEDIARY_REASON, INTERMEDIARY_FIX
             return res
         found: dict[str, Offer] = {}
+        last_html = ""
         for u in official:
             r = self.get(u, res)
+            last_html = r.text
             for off in self.extract_offers(source, r.url or u, r.text):
                 _merge_into(found, off)
         res.offers = list(found.values())[:MAX_OFFERS]
+        if not res.offers and last_html:
+            self._llm_last_resort(source, last_html, found)   # (d) step 5, stub -> no-op by default
+            res.offers = list(found.values())[:MAX_OFFERS]
         self.finish(res)
         return res
+
+    def _llm_last_resort(self, source: dict, html: str, found: dict[str, Offer]) -> None:
+        """Last resort when nothing else matched: an LLM reads the page text (stub, off by default)."""
+        soup = BeautifulSoup(html, "lxml")
+        for t in soup(["script", "style", "noscript"]):
+            t.decompose()
+        text = clean_text(soup.get_text(" "))
+        for d in maybe_llm_offers(source, text):
+            u = d.get("url") or ""
+            off = self.offer(
+                source, ext_id=d.get("ext_id") or ext_id_for(u or d["title"]),
+                title=d["title"], url=u, location=d.get("location", "") or "",
+                contract=d.get("contract", "") or "",
+                published=iso_to_date(d.get("published")), description=(d.get("description") or "")[:4000],
+                extra={"llm": True})
+            _merge_into(found, off)
 
     def finish(self, res: SourceResult, prefix: str = "") -> None:
         res.status = "partiel"

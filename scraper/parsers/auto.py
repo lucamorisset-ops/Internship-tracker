@@ -12,10 +12,17 @@
        switches the source to that kind for the next runs;
      Greenhouse, Lever, Recruitee, Workday (no dedicated parser) -> read here
        from their public APIs; the source stays "auto" with params {"ats": ...}.
-   Nothing recognised -> generic reading of the page (links that look like offers).
+   Nothing recognised -> JSON endpoint discovery (scraper/discover.py, browser,
+   only when ENABLE_BROWSER is set), then generic reading of the page.
 4. no URL: public APIs are tried with slugs derived from the company name
    (SmartRecruiters, Greenhouse, Lever); the first board whose company name
    fits is used. Nothing found -> "a_configurer" with what Luca can do.
+
+Extraction hierarchy, stopping at the first that returns offers (brief point d):
+ATS API (params.ats) -> discovered JSON endpoint (params.endpoint) -> structured
+data + offer links (generic reader: JSON-LD, Microdata, RDFa) -> LLM on the page
+text (scraper/llm_extract.py, last resort, stub). The method that worked is kept
+in sources.params so the next passes skip detection.
 
 Every request goes through the fetcher (robots.txt, delays); a 404 on a
 guessed slug only means "not this one".
