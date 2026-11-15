@@ -5,8 +5,11 @@ Rules applied to every request, whatever the parser:
     for our own user agent; a disallowed URL is never fetched;
   * Crawl-delay is obeyed, otherwise at least MIN_DELAY seconds between two
     requests to the same host;
-  * the robot says who it is (USER_AGENT) and never logs in, submits forms or
-    applies to anything: it only reads public pages and public APIs.
+  * the robot says who it is (USER_AGENT, with an optional contact address read
+    from SCRAPER_CONTACT) and never logs in, submits forms or applies to
+    anything: it only reads public pages and public APIs;
+  * an optional HTTP cache (requests-cache) avoids downloading the same page
+    twice; it is off by default and enabled with SCRAPER_CACHE_TTL (seconds).
 
 When CAPTURE_DIR is set, every response body is saved there so that parsers
 can be fixed from real pages (the GitHub workflow uploads that folder).
@@ -31,10 +34,51 @@ log = logging.getLogger(__name__)
 
 BOT_NAME = "tracker-stages-bot"
 REPO_URL = "https://github.com/lucamorisset-ops/internship-tracker"
-USER_AGENT = f"Mozilla/5.0 (compatible; {BOT_NAME}/1.0; +{REPO_URL})"
 MIN_DELAY = 2.0          # seconds between two requests to the same host
 MAX_CRAWL_DELAY = 60.0   # Crawl-delay obeyed in full up to this value; a host asking for more is not read
 TIMEOUT = 30
+CACHE_TTL_DEFAULT = 0    # HTTP cache off by default; set SCRAPER_CACHE_TTL (e.g. 21600 = 6 h) to enable it
+
+
+def user_agent(contact: str | None = None) -> str:
+    """Honest, identifiable User-Agent, with a contact address when one is provided.
+
+    The robot always says who it is; the contact (an e-mail where a webmaster can
+    reach us) is read from SCRAPER_CONTACT and never written in the code.
+    """
+    contact = (contact if contact is not None else os.environ.get("SCRAPER_CONTACT") or "").strip()
+    base = f"Mozilla/5.0 (compatible; {BOT_NAME}/1.0; +{REPO_URL}"
+    return base + (f"; mailto:{contact})" if contact else ")")
+
+
+# Kept for callers that import the constant; a Fetcher uses its own (contact-aware) value.
+USER_AGENT = user_agent()
+
+
+def make_session(cache_ttl: float = 0) -> requests.Session:
+    """A requests Session, optionally backed by an HTTP cache (requests-cache).
+
+    cache_ttl > 0 enables a shared on-disk cache so the same page is not downloaded
+    twice within its lifetime (politeness: lighter on the sites). Disabled by default
+    so the production behaviour (always-fresh reads, needed to close offers and watch
+    pages) is unchanged unless SCRAPER_CACHE_TTL is set. Degrades gracefully to a plain
+    Session when requests-cache is not installed.
+    """
+    if cache_ttl and cache_ttl > 0:
+        try:
+            from requests_cache import CachedSession
+
+            return CachedSession(
+                cache_name=os.environ.get("SCRAPER_CACHE_PATH", "http_cache"),
+                backend="sqlite",
+                expire_after=cache_ttl,
+                allowable_methods=("GET",),
+                allowable_codes=(200,),
+                stale_if_error=True,
+            )
+        except Exception as e:  # noqa: BLE001 - never block a run because the cache is unavailable
+            log.warning("cache HTTP indisponible (%s) : lecture sans cache", e)
+    return requests.Session()
 
 
 class RobotsDisallowed(Exception):
@@ -90,11 +134,18 @@ def looks_like_challenge(text: str, status: int) -> bool:
 class Fetcher:
     """requests.Session wrapper with robots.txt, delays, capture and retries."""
 
-    def __init__(self, capture_dir: str | None = None, min_delay: float = MIN_DELAY):
-        self.session = requests.Session()
+    def __init__(self, capture_dir: str | None = None, min_delay: float = MIN_DELAY,
+                 cache_ttl: float | None = None):
+        if cache_ttl is None:
+            try:
+                cache_ttl = float(os.environ.get("SCRAPER_CACHE_TTL", CACHE_TTL_DEFAULT) or 0)
+            except ValueError:
+                cache_ttl = 0
+        self.user_agent = user_agent()
+        self.session = make_session(cache_ttl)
         self.session.headers.update(
             {
-                "User-Agent": USER_AGENT,
+                "User-Agent": self.user_agent,
                 "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
             }
         )

@@ -12,10 +12,17 @@
        switches the source to that kind for the next runs;
      Greenhouse, Lever, Recruitee, Workday (no dedicated parser) -> read here
        from their public APIs; the source stays "auto" with params {"ats": ...}.
-   Nothing recognised -> generic reading of the page (links that look like offers).
+   Nothing recognised -> JSON endpoint discovery (scraper/discover.py, browser,
+   only when ENABLE_BROWSER is set), then generic reading of the page.
 4. no URL: public APIs are tried with slugs derived from the company name
    (SmartRecruiters, Greenhouse, Lever); the first board whose company name
    fits is used. Nothing found -> "a_configurer" with what Luca can do.
+
+Extraction hierarchy, stopping at the first that returns offers (brief point d):
+ATS API (params.ats) -> discovered JSON endpoint (params.endpoint) -> structured
+data + offer links (generic reader: JSON-LD, Microdata, RDFa) -> LLM on the page
+text (scraper/llm_extract.py, last resort, stub). The method that worked is kept
+in sources.params so the next passes skip detection.
 
 Every request goes through the fetcher (robots.txt, delays); a 404 on a
 guessed slug only means "not this one".
@@ -23,6 +30,7 @@ guessed slug only means "not this one".
 from __future__ import annotations
 
 import html as html_module
+import logging
 import re
 import unicodedata
 from datetime import datetime, timezone
@@ -30,6 +38,7 @@ from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
+from .. import discover
 from ..http import FetchError, RobotsDisallowed
 from ..models import Offer, SourceResult, fold
 from . import REGISTRY, get_parser
@@ -37,13 +46,15 @@ from .base import BaseParser, clean_text, iso_to_date, parse_relative_age
 from .generic import INTERMEDIARY_FIX, INTERMEDIARY_REASON, is_intermediary
 from .generic import Parser as GenericParser
 
+log = logging.getLogger("scraper")
+
 LABELS = {
     "smartrecruiters": "SmartRecruiters", "oracle_hcm": "Oracle Recruiting Cloud", "talentsoft": "Talentsoft",
     "sainoo": "Sainoo", "talentbrew": "TalentBrew", "greenhouse": "Greenhouse", "lever": "Lever",
-    "recruitee": "Recruitee", "workday": "Workday",
+    "recruitee": "Recruitee", "workday": "Workday", "ashby": "Ashby",
 }
 # kinds read inside this module (not in the registry): source stays "auto" with params {"ats": kind, ...}
-LOCAL_ATS = ("greenhouse", "lever", "recruitee", "workday")
+LOCAL_ATS = ("greenhouse", "lever", "recruitee", "workday", "ashby")
 KEEP_PARAMS = ("internships_only",)          # carried over when the params are replaced
 JSON = {"Accept": "application/json"}
 WORKDAY_SEARCHES = ["intern", "stage"]
@@ -67,6 +78,8 @@ _GH = re.compile(r"(?:boards|job-boards)(\.eu)?\.greenhouse\.io/"
                  r"(?:embed/job_board(?:/js)?\?(?:[^\"'\s<>]*?&(?:amp;)?)?for=)?([A-Za-z0-9_\-]+)")
 _LEVER = re.compile(r"(?:jobs|api)\.(eu\.)?lever\.co/(?:v0/postings/)?([A-Za-z0-9_\-]+)")
 _RECRUITEE = re.compile(r"https?://([a-z0-9\-]+)\.recruitee\.com")
+_ASHBY = re.compile(r"(?:jobs|api)\.ashbyhq\.com/(?:posting-api/job-board/)?([A-Za-z0-9][A-Za-z0-9._-]*)")
+_ASHBY_RESERVED = {"posting-api", "job-board", "embed", "api", "assets", "static"}
 _SAINOO = re.compile(r"https?://([a-z0-9\-]+)\.sainoo\.com")
 _TS_LIST = re.compile(r"https?://[^\s\"'<>]+?/offre-de-emploi/liste-offres\.aspx[^\s\"'<>]*", re.I)
 _TS_HOST = re.compile(r"https?://[a-z0-9\-]+\.talent-soft\.com", re.I)
@@ -102,6 +115,9 @@ def _detect(s: str, talentbrew: bool = False) -> tuple[str, dict] | None:
     for m in _RECRUITEE.finditer(s):
         if m.group(1) not in _SUBDOMAIN_RESERVED:
             return "recruitee", {"slug": m.group(1)}
+    for m in _ASHBY.finditer(s):
+        if m.group(1).lower() not in _ASHBY_RESERVED:
+            return "ashby", {"slug": m.group(1)}
     m = _TS_LIST.search(s)
     if m:
         return "talentsoft", {"urls": [html_module.unescape(m.group(0))], "max_pages": 4}
@@ -212,6 +228,8 @@ class Parser(BaseParser):
         p = self.params(source)
         if p.get("ats"):
             return self._read_local(source, p, res)
+        if p.get("endpoint"):
+            return self._read_endpoint(source, p, res)
         url = str(p.get("url") or source.get("catalog_url") or "").strip()
         if not url:
             return self._guess_from_name(source, res)
@@ -227,6 +245,9 @@ class Parser(BaseParser):
             found = detect_ats(final, page.text)
         if found:
             return self._use(source, found[0], found[1], res, via=f"sur {urlsplit(url).netloc}")
+        discovered = self._discover(source, page.url or url, res)      # (e) before generic reading
+        if discovered is not None:
+            return discovered
         return self._generic(source, page.url or url, page.text, res)
 
     # -------------------------------------------------------------- outcomes
@@ -347,7 +368,7 @@ class Parser(BaseParser):
     def _read_local(self, source: dict, params: dict, res: SourceResult, data=None) -> SourceResult:
         ats = params.get("ats")
         reader = {"greenhouse": self._greenhouse, "lever": self._lever,
-                  "recruitee": self._recruitee, "workday": self._workday}.get(ats)
+                  "recruitee": self._recruitee, "workday": self._workday, "ashby": self._ashby}.get(ats)
         if reader is None:
             res.ok, res.status, res.complete = False, "erreur", False
             res.reason = f"Lecteur inconnu pour ce site ({ats})."
@@ -355,6 +376,99 @@ class Parser(BaseParser):
             return res
         res.method = f"api {LABELS[ats]}"
         reader(source, params, res, data)
+        return res
+
+    # -------------------------------------------------------------- discovered JSON endpoint (e)
+    MAX_DISCOVER_PAGES = 25
+
+    def _read_endpoint(self, source: dict, params: dict, res: SourceResult) -> SourceResult:
+        """Replay a JSON endpoint found earlier (params['endpoint']), without a browser.
+
+        Filters were already cleared and the pagination parameter detected when the
+        endpoint was remembered; here we just page through it and map the fields.
+        """
+        ep = params["endpoint"]
+        cand = discover.Candidate(
+            method=ep.get("method", "GET"), url=ep["url"], json_path=ep.get("json_path", "$"),
+            post_data=ep.get("post_data"), headers=ep.get("headers") or {}, page=ep.get("page"))
+        res.method = "api découverte"
+        base = "{0.scheme}://{0.netloc}".format(urlsplit(cand.url))
+        seen: set[str] = set()
+        res.complete = False
+        for index in range(self.MAX_DISCOVER_PAGES):
+            page_url, body = discover.apply_page(cand, index)
+            data = self._endpoint_fetch(cand.method, page_url, body, cand.headers, res)
+            items = discover.resolve_path(data, cand.json_path)
+            if not isinstance(items, list) or not items:
+                res.complete = True            # reached the end of the catalogue
+                break
+            added = 0
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                fields = discover.map_offer_fields(it, base)
+                title = fields.get("title")
+                if not title:
+                    continue
+                ext = str(fields.get("ext_id") or fields.get("url") or title)
+                if ext in seen:
+                    continue
+                seen.add(ext)
+                published = iso_to_date(fields.get("published")) or parse_relative_age(
+                    str(fields.get("published") or ""), self.ctx.today)
+                res.offers.append(self.offer(
+                    source, ext_id=ext, title=title, url=fields.get("url") or cand.url,
+                    location=fields.get("location", ""), contract=fields.get("contract", ""),
+                    published=published, description=(fields.get("description") or "")[:4000],
+                    extra={"discovered": True}))
+                added += 1
+            if not cand.page or added == 0:    # no pagination, or nothing new on this page
+                res.complete = res.complete or not cand.page
+                break
+        return res
+
+    def _endpoint_fetch(self, method: str, url: str, body: str | None, headers: dict, res: SourceResult):
+        hdrs = {"Accept": "application/json", **(headers or {})}
+        if method.upper() == "POST":
+            hdrs.setdefault("Content-Type", "application/json")
+            r = self.ctx.fetcher.request("POST", url, headers=hdrs, data=body)
+            res.urls_read.append(url)
+            try:
+                return r.json()
+            except ValueError:
+                raise FetchError(url, r.status, "réponse qui n'est pas du JSON") from None
+        return self.json(url, res, headers=hdrs)
+
+    def _discover(self, source: dict, url: str, res: SourceResult) -> SourceResult | None:
+        """(e) Find the JSON endpoint behind a careers page with the browser, then replay it.
+
+        Returns a filled SourceResult (and remembers the endpoint) on success, or None to
+        let the generic reader take over. Disabled unless ENABLE_BROWSER and a browser exist.
+        """
+        if not discover.browser_enabled() or self.ctx.browser is None:
+            return None
+        try:
+            candidates, cookies, _html = discover.sniff_job_endpoints(
+                url, self.ctx.fetcher.user_agent, allowed=self.ctx.fetcher.allowed)
+        except Exception as e:  # noqa: BLE001 - discovery is best-effort, never breaks the pass
+            log.info("  découverte d'endpoint impossible (%s)", e)
+            return None
+        anti = discover.antibot_in(cookies=cookies)
+        if anti:                               # anti-bot token: abandon, never reproduced
+            log.info("  découverte abandonnée : jeton anti-robot (%s)", anti)
+            return None
+        if not candidates:
+            return None
+        cand = discover.generalize_request(candidates[0])
+        endpoint = cand.as_params()
+        res.offers = []
+        self._read_endpoint(source, {"endpoint": endpoint}, res)
+        if not res.offers:
+            return None
+        keep = {k: v for k, v in self.params(source).items() if k in KEEP_PARAMS}
+        res.source_updates = {"kind": "auto", "params": {**keep, "endpoint": endpoint}}
+        res.reason = ("Aucun logiciel de recrutement connu, mais le robot a trouvé l'adresse JSON qui "
+                      "charge les offres de cette page et la lira directement aux prochains passages.")
         return res
 
     def _greenhouse(self, source, params, res, data=None) -> None:
@@ -433,6 +547,35 @@ class Parser(BaseParser):
                 published=iso_to_date(o.get("published_at") or o.get("created_at")),
                 description=clean_text(f"{o.get('description') or ''} {o.get('requirements') or ''}")[:4000],
                 extra={"ats": "recruitee"},
+            ))
+        res.complete = True
+
+    def _ashby(self, source, params, res, data=None) -> None:
+        """Ashby public job-board posting API (api.ashbyhq.com/posting-api/job-board/{slug})."""
+        slug = params["slug"]
+        url = _ashby_api(slug)
+        if data is None:
+            data = self.json(url, res)
+        jobs = data.get("jobs") if isinstance(data, dict) else None
+        if not isinstance(jobs, list):
+            raise FetchError(url, 200, "réponse inattendue d'Ashby")
+        for j in jobs:
+            if not isinstance(j, dict) or not j.get("id") or j.get("isListed") is False:
+                continue
+            locs = [j.get("location") or ""]
+            for sl in j.get("secondaryLocations") or []:
+                if isinstance(sl, dict) and sl.get("location"):
+                    locs.append(sl["location"])
+            addr = (j.get("address") or {}).get("postalAddress") or {} if isinstance(j.get("address"), dict) else {}
+            desc = j.get("descriptionPlain") or clean_text(html_module.unescape(j.get("descriptionHtml") or ""))
+            res.offers.append(self.offer(
+                source, ext_id=str(j["id"]), title=j.get("title") or "",
+                url=j.get("jobUrl") or j.get("applyUrl") or f"https://jobs.ashbyhq.com/{slug}/{j['id']}",
+                location=", ".join(x for x in locs if x),
+                country=str(addr.get("addressCountry") or "").upper(),
+                contract=str(j.get("employmentType") or ""),
+                published=iso_to_date(j.get("publishedAt")),
+                description=clean_text(desc)[:4000], extra={"ats": "ashby"},
             ))
         res.complete = True
 
@@ -517,6 +660,10 @@ def _gh_api(slug: str, region: str | None = None) -> str:
 def _lever_api(slug: str, region: str | None = None) -> str:
     host = "api.eu.lever.co" if region == "eu" else "api.lever.co"
     return f"https://{host}/v0/postings/{quote(slug)}?mode=json"
+
+
+def _ashby_api(slug: str) -> str:
+    return f"https://api.ashbyhq.com/posting-api/job-board/{quote(slug)}"
 
 
 def _workday_posted(label: str, today):

@@ -144,3 +144,35 @@ def test_crawl_delay_is_obeyed_in_full_or_the_host_is_not_read(monkeypatch):
     with pytest.raises(FetchError) as e:
         f.get("https://very-slow.test/jobs")
     assert "Crawl-delay de 120 s" in e.value.detail
+
+
+# --------------------------------------------------------------------------- polite client (b)
+def test_user_agent_contact():
+    from scraper.http import user_agent, BOT_NAME
+    assert user_agent("") == f"Mozilla/5.0 (compatible; {BOT_NAME}/1.0; +https://github.com/lucamorisset-ops/internship-tracker)"
+    ua = user_agent("veille@example.org")
+    assert "mailto:veille@example.org" in ua and ua.endswith(")")
+
+
+def test_fetcher_reads_contact_from_env(monkeypatch):
+    monkeypatch.setenv("SCRAPER_CONTACT", "veille@example.org")
+    f = Fetcher(min_delay=0)
+    assert "mailto:veille@example.org" in f.user_agent
+    assert f.session.headers["User-Agent"] == f.user_agent
+
+
+def test_make_session_enables_cache_when_ttl_set(tmp_path, monkeypatch):
+    """A positive TTL gives a CachedSession limited to GET/200; 0 gives a plain Session."""
+    import datetime
+    import requests
+    from scraper.http import make_session
+
+    assert type(make_session(0)) is requests.Session
+
+    monkeypatch.setenv("SCRAPER_CACHE_PATH", str(tmp_path / "http_cache"))   # not in the repo
+    session = make_session(cache_ttl=3600)
+    if type(session).__name__ != "CachedSession":
+        import pytest
+        pytest.skip("requests-cache non installé")
+    assert session.settings.expire_after in (3600, datetime.timedelta(seconds=3600))
+    assert set(session.settings.allowable_methods) == {"GET"}

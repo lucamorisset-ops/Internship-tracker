@@ -6,3 +6,5 @@ data/
 setup.sql
 *.local.json
 .env
+http_cache.sqlite
+*.sqlite

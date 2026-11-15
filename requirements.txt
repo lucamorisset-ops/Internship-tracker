@@ -1,5 +1,12 @@
 requests==2.34.2
+requests-cache==1.3.3
 beautifulsoup4==4.15.0
 lxml==6.1.3
 playwright==1.63.0
 pytest==9.2.0
+
+# Optionnel : extraction multi-syntaxe des données structurées (microdata, RDFa…).
+# Le module structured.py marche sans (repli JSON-LD + OpenGraph en pur lxml) ; si extruct
+# est installé, il est utilisé en plus. Non épinglé ici pour ne pas casser la CI si sa
+# construction échoue sur l'hôte.
+#   pip install extruct w3lib

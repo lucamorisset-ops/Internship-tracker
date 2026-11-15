@@ -25,7 +25,9 @@ from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from bs4 import BeautifulSoup, Tag
 
+from ..llm_extract import maybe_llm_offers
 from ..models import Offer, SourceResult, fold, slugify, url_key
+from ..structured import extra_structured_jobpostings, structured_jobpostings
 from .base import BaseParser, clean_text, iso_to_date, jsonld_jobpostings, parse_date
 
 REASON = ("Lecture générique : le robot repère les liens qui ressemblent à des offres. "
@@ -245,13 +247,60 @@ class Parser(BaseParser):
             res.status, res.reason, res.fix = "a_configurer", INTERMEDIARY_REASON, INTERMEDIARY_FIX
             return res
         found: dict[str, Offer] = {}
+        last_html = ""
         for u in official:
             r = self.get(u, res)
+            last_html = r.text
             for off in self.extract_offers(source, r.url or u, r.text):
                 _merge_into(found, off)
         res.offers = list(found.values())[:MAX_OFFERS]
+        if not res.offers:
+            self._read_sitemap_offers(source, official[0], found, res)   # (§5) sitemap/RSS offer pages
+            res.offers = list(found.values())[:MAX_OFFERS]
+        if not res.offers and last_html:
+            self._llm_last_resort(source, last_html, found)   # (d) step 5, stub -> no-op by default
+            res.offers = list(found.values())[:MAX_OFFERS]
         self.finish(res)
         return res
+
+    def _read_sitemap_offers(self, source: dict, base_url: str, found: dict[str, Offer],
+                             res: SourceResult, limit: int = 12) -> None:
+        """When the careers page lists no offer, find offer pages via the sitemap / feed and
+        read their structured data (JSON-LD JobPosting). Bounded and best-effort."""
+        from ..sitemap import collect_offer_pages   # lazy: avoids a generic <-> sitemap import cycle
+        try:
+            urls = collect_offer_pages(self.ctx.fetcher, base_url, limit=limit)
+        except Exception:  # noqa: BLE001 - discovery must never break the read
+            return
+        for u in urls:
+            try:
+                r = self.get(u, res)
+            except Exception:  # noqa: BLE001 - one bad offer page must not stop the others
+                continue
+            for jp in structured_jobpostings(r.text, r.url or u):
+                off = self.offer(
+                    source, ext_id=ext_id_for(jp.get("url") or u), title=jp["title"],
+                    url=jp.get("url") or u, location=jp.get("location", ""),
+                    contract=jp.get("contract", ""), published=jp.get("published"),
+                    description=(jp.get("description") or "")[:4000],
+                    extra={"structured": jp.get("syntax"), "via": "sitemap"})
+                _merge_into(found, off, from_jsonld=True)
+
+    def _llm_last_resort(self, source: dict, html: str, found: dict[str, Offer]) -> None:
+        """Last resort when nothing else matched: an LLM reads the page text (stub, off by default)."""
+        soup = BeautifulSoup(html, "lxml")
+        for t in soup(["script", "style", "noscript"]):
+            t.decompose()
+        text = clean_text(soup.get_text(" "))
+        for d in maybe_llm_offers(source, text):
+            u = d.get("url") or ""
+            off = self.offer(
+                source, ext_id=d.get("ext_id") or ext_id_for(u or d["title"]),
+                title=d["title"], url=u, location=d.get("location", "") or "",
+                contract=d.get("contract", "") or "",
+                published=iso_to_date(d.get("published")), description=(d.get("description") or "")[:4000],
+                extra={"llm": True})
+            _merge_into(found, off)
 
     def finish(self, res: SourceResult, prefix: str = "") -> None:
         res.status = "partiel"
@@ -320,6 +369,18 @@ class Parser(BaseParser):
                 published=iso_to_date(j.get("datePosted")),
                 description=clean_text(j.get("description") or "")[:4000],
                 extra={"jsonld": True},
+            )
+            _merge_into(found, off, from_jsonld=True)
+
+        # Microdata + (optional) RDFa/Microformats: structured data in syntaxes other than
+        # JSON-LD, so a page that marks up its offers that way is read too.
+        for jp in extra_structured_jobpostings(html, base):
+            u = jp.get("url") or page_url
+            off = self.offer(
+                source, ext_id=ext_id_for(u), title=jp["title"], url=u,
+                location=jp.get("location", ""), contract=jp.get("contract", ""),
+                published=jp.get("published"), description=(jp.get("description") or "")[:4000],
+                extra={"structured": jp.get("syntax")},
             )
             _merge_into(found, off, from_jsonld=True)
         return list(found.values())
