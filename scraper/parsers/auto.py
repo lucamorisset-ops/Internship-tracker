@@ -40,10 +40,10 @@ from .generic import Parser as GenericParser
 LABELS = {
     "smartrecruiters": "SmartRecruiters", "oracle_hcm": "Oracle Recruiting Cloud", "talentsoft": "Talentsoft",
     "sainoo": "Sainoo", "talentbrew": "TalentBrew", "greenhouse": "Greenhouse", "lever": "Lever",
-    "recruitee": "Recruitee", "workday": "Workday",
+    "recruitee": "Recruitee", "workday": "Workday", "ashby": "Ashby",
 }
 # kinds read inside this module (not in the registry): source stays "auto" with params {"ats": kind, ...}
-LOCAL_ATS = ("greenhouse", "lever", "recruitee", "workday")
+LOCAL_ATS = ("greenhouse", "lever", "recruitee", "workday", "ashby")
 KEEP_PARAMS = ("internships_only",)          # carried over when the params are replaced
 JSON = {"Accept": "application/json"}
 WORKDAY_SEARCHES = ["intern", "stage"]
@@ -67,6 +67,8 @@ _GH = re.compile(r"(?:boards|job-boards)(\.eu)?\.greenhouse\.io/"
                  r"(?:embed/job_board(?:/js)?\?(?:[^\"'\s<>]*?&(?:amp;)?)?for=)?([A-Za-z0-9_\-]+)")
 _LEVER = re.compile(r"(?:jobs|api)\.(eu\.)?lever\.co/(?:v0/postings/)?([A-Za-z0-9_\-]+)")
 _RECRUITEE = re.compile(r"https?://([a-z0-9\-]+)\.recruitee\.com")
+_ASHBY = re.compile(r"(?:jobs|api)\.ashbyhq\.com/(?:posting-api/job-board/)?([A-Za-z0-9][A-Za-z0-9._-]*)")
+_ASHBY_RESERVED = {"posting-api", "job-board", "embed", "api", "assets", "static"}
 _SAINOO = re.compile(r"https?://([a-z0-9\-]+)\.sainoo\.com")
 _TS_LIST = re.compile(r"https?://[^\s\"'<>]+?/offre-de-emploi/liste-offres\.aspx[^\s\"'<>]*", re.I)
 _TS_HOST = re.compile(r"https?://[a-z0-9\-]+\.talent-soft\.com", re.I)
@@ -102,6 +104,9 @@ def _detect(s: str, talentbrew: bool = False) -> tuple[str, dict] | None:
     for m in _RECRUITEE.finditer(s):
         if m.group(1) not in _SUBDOMAIN_RESERVED:
             return "recruitee", {"slug": m.group(1)}
+    for m in _ASHBY.finditer(s):
+        if m.group(1).lower() not in _ASHBY_RESERVED:
+            return "ashby", {"slug": m.group(1)}
     m = _TS_LIST.search(s)
     if m:
         return "talentsoft", {"urls": [html_module.unescape(m.group(0))], "max_pages": 4}
@@ -347,7 +352,7 @@ class Parser(BaseParser):
     def _read_local(self, source: dict, params: dict, res: SourceResult, data=None) -> SourceResult:
         ats = params.get("ats")
         reader = {"greenhouse": self._greenhouse, "lever": self._lever,
-                  "recruitee": self._recruitee, "workday": self._workday}.get(ats)
+                  "recruitee": self._recruitee, "workday": self._workday, "ashby": self._ashby}.get(ats)
         if reader is None:
             res.ok, res.status, res.complete = False, "erreur", False
             res.reason = f"Lecteur inconnu pour ce site ({ats})."
@@ -436,6 +441,35 @@ class Parser(BaseParser):
             ))
         res.complete = True
 
+    def _ashby(self, source, params, res, data=None) -> None:
+        """Ashby public job-board posting API (api.ashbyhq.com/posting-api/job-board/{slug})."""
+        slug = params["slug"]
+        url = _ashby_api(slug)
+        if data is None:
+            data = self.json(url, res)
+        jobs = data.get("jobs") if isinstance(data, dict) else None
+        if not isinstance(jobs, list):
+            raise FetchError(url, 200, "réponse inattendue d'Ashby")
+        for j in jobs:
+            if not isinstance(j, dict) or not j.get("id") or j.get("isListed") is False:
+                continue
+            locs = [j.get("location") or ""]
+            for sl in j.get("secondaryLocations") or []:
+                if isinstance(sl, dict) and sl.get("location"):
+                    locs.append(sl["location"])
+            addr = (j.get("address") or {}).get("postalAddress") or {} if isinstance(j.get("address"), dict) else {}
+            desc = j.get("descriptionPlain") or clean_text(html_module.unescape(j.get("descriptionHtml") or ""))
+            res.offers.append(self.offer(
+                source, ext_id=str(j["id"]), title=j.get("title") or "",
+                url=j.get("jobUrl") or j.get("applyUrl") or f"https://jobs.ashbyhq.com/{slug}/{j['id']}",
+                location=", ".join(x for x in locs if x),
+                country=str(addr.get("addressCountry") or "").upper(),
+                contract=str(j.get("employmentType") or ""),
+                published=iso_to_date(j.get("publishedAt")),
+                description=clean_text(desc)[:4000], extra={"ats": "ashby"},
+            ))
+        res.complete = True
+
     def _workday(self, source, params, res, data=None) -> None:
         host = str(params["host"]).replace("https://", "").replace("http://", "").strip("/")
         tenant, site = params["tenant"], params["site"]
@@ -517,6 +551,10 @@ def _gh_api(slug: str, region: str | None = None) -> str:
 def _lever_api(slug: str, region: str | None = None) -> str:
     host = "api.eu.lever.co" if region == "eu" else "api.lever.co"
     return f"https://{host}/v0/postings/{quote(slug)}?mode=json"
+
+
+def _ashby_api(slug: str) -> str:
+    return f"https://api.ashbyhq.com/posting-api/job-board/{quote(slug)}"
 
 
 def _workday_posted(label: str, today):

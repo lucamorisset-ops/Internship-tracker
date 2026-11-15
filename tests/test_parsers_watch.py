@@ -260,6 +260,10 @@ def test_detect_ats_patterns():
     assert detect_ats("https://exampleam.wd3.myworkdayjobs.com/en-US/Careers") == (
         "workday", {"host": "exampleam.wd3.myworkdayjobs.com", "tenant": "exampleam", "site": "Careers"})
     assert detect_ats("https://exampleam.recruitee.com/") == ("recruitee", {"slug": "exampleam"})
+    assert detect_ats("https://jobs.ashbyhq.com/exemple-am") == ("ashby", {"slug": "exemple-am"})
+    assert detect_ats("https://api.ashbyhq.com/posting-api/job-board/exemple-am") == ("ashby", {"slug": "exemple-am"})
+    ash = '<script src="https://jobs.ashbyhq.com/exemple-am?embed=js"></script>'
+    assert detect_ats("https://www.exemple-am.com/careers", ash) == ("ashby", {"slug": "exemple-am"})
     bk = "https://careers.blackrock.com/category/students-and-graduates-jobs/45831/9022304/1"
     assert detect_ats(bk) == ("talentbrew", {"url": bk, "max_pages": 4})
     assert detect_ats("https://www.exemple-gestion.fr/fr/carrieres") is None
@@ -382,6 +386,27 @@ def test_auto_reads_lever(make_ctx):
     assert o.location == "London" and o.country == "GB" and o.published == date(2026, 10, 30)
     assert "Build financial models" in o.description and "March 2027" in o.description
     assert o.url == "https://jobs.lever.co/exampleam/5f1d2c3b-aaaa-4bbb-8ccc-000000000001"
+
+
+def test_auto_reads_ashby(make_ctx):
+    ctx = make_ctx({r"api\.ashbyhq\.com/posting-api/job-board/exemple-am$": "ashby_board.json"})
+    res = get_parser("auto", ctx).read(_auto(params={"ats": "ashby", "slug": "exemple-am"}, company="Exemple AM"))
+    assert res.ok and res.complete and res.method == "api Ashby"
+    assert len(res.offers) == 2                                   # the unlisted draft is dropped
+    o = next(o for o in res.offers if o.ext_id.endswith("0001"))
+    assert o.title == "Equity Research Internship - Spring 2027" and o.contract == "Intern"
+    assert o.location == "Paris, France, London, United Kingdom" and o.country == "FR"
+    assert o.published == date(2026, 11, 3)
+    assert "analyse actions" in o.description and "<" not in o.description
+    assert o.url == "https://jobs.ashbyhq.com/exemple-am/a1b2c3d4-0001-4aaa-bbbb-000000000001"
+    assert not any(j.ext_id.endswith("unlisted") for j in res.offers)
+
+
+def test_auto_detects_ashby_from_url_and_reads_it(make_ctx):
+    ctx = make_ctx({r"api\.ashbyhq\.com/posting-api/job-board/exemple-am$": "ashby_board.json"})
+    res = get_parser("auto", ctx).read(_auto("https://jobs.ashbyhq.com/exemple-am", company="Exemple AM"))
+    assert res.source_updates == {"kind": "auto", "params": {"ats": "ashby", "slug": "exemple-am"}}
+    assert len(res.offers) == 2 and res.method == "détection puis api Ashby"
 
 
 def test_auto_detects_workday_and_reads_its_api(make_ctx):

@@ -1,0 +1,43 @@
+{
+  "apiVersion": "1",
+  "jobs": [
+    {
+      "id": "a1b2c3d4-0001-4aaa-bbbb-000000000001",
+      "title": "Equity Research Internship - Spring 2027",
+      "department": "Investments",
+      "team": "Equity Research",
+      "employmentType": "Intern",
+      "location": "Paris, France",
+      "secondaryLocations": [{"location": "London, United Kingdom"}],
+      "publishedAt": "2026-11-03T09:00:00.000Z",
+      "isListed": true,
+      "isRemote": false,
+      "address": {"postalAddress": {"addressLocality": "Paris", "addressRegion": "Île-de-France", "addressCountry": "FR"}},
+      "jobUrl": "https://jobs.ashbyhq.com/exemple-am/a1b2c3d4-0001-4aaa-bbbb-000000000001",
+      "applyUrl": "https://jobs.ashbyhq.com/exemple-am/a1b2c3d4-0001-4aaa-bbbb-000000000001/application",
+      "descriptionHtml": "<p>Stage de 6 mois en analyse actions, &agrave; partir de janvier 2027, bas&eacute; &agrave; Paris.</p>",
+      "descriptionPlain": "Stage de 6 mois en analyse actions, à partir de janvier 2027, basé à Paris."
+    },
+    {
+      "id": "a1b2c3d4-0002-4aaa-bbbb-000000000002",
+      "title": "Senior Software Engineer",
+      "department": "Engineering",
+      "employmentType": "FullTime",
+      "location": "Remote - EU",
+      "secondaryLocations": [],
+      "publishedAt": "2026-10-20T09:00:00.000Z",
+      "isListed": true,
+      "jobUrl": "https://jobs.ashbyhq.com/exemple-am/a1b2c3d4-0002-4aaa-bbbb-000000000002",
+      "applyUrl": "https://jobs.ashbyhq.com/exemple-am/a1b2c3d4-0002-4aaa-bbbb-000000000002/application",
+      "descriptionHtml": "<p>Build things.</p>"
+    },
+    {
+      "id": "a1b2c3d4-0003-unlisted",
+      "title": "Brouillon - ne pas afficher",
+      "employmentType": "Intern",
+      "location": "Paris",
+      "isListed": false,
+      "jobUrl": "https://jobs.ashbyhq.com/exemple-am/a1b2c3d4-0003-unlisted"
+    }
+  ]
+}
